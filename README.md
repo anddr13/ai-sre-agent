@@ -21,7 +21,9 @@ The "production" it investigates is the [voting-app](https://github.com/anddr13/
 | [scenarios/](scenarios) | Chaos scenarios: `break.sh`, `restore.sh`, and the expected answer written before the agent runs |
 | [src/ai_sre_agent/mcp_server/](src/ai_sre_agent/mcp_server) | The read-only MCP server: the only way the agent looks at the cluster |
 | [deploy/rbac.yaml](deploy/rbac.yaml) | The agent's ServiceAccount and ClusterRole (get/list/watch; no Secrets, no exec, no logs) |
-| [scripts/](scripts) | `agent-kubeconfig.sh` (a kubeconfig for that ServiceAccount), `check-rbac.sh` (`kubectl auth can-i` assertions) |
+| [src/ai_sre_agent/](src/ai_sre_agent) | The agent: `service.py` (Alertmanager webhook), `investigator.py` (the tool-calling loop), `redact.py`, `audit.py`, `slack.py`, `cli.py` |
+| [deploy/agent.yaml](deploy/agent.yaml) | The agent in the cluster (deployed by Argo CD from this repo), audit log on a PVC |
+| [scripts/](scripts) | `agent-kubeconfig.sh` (a kubeconfig for that ServiceAccount), `check-rbac.sh` (`kubectl auth can-i` assertions), `agent-secret.sh` (the Secret from `.env`) |
 
 The alerts themselves live in voting-gitops (`charts/alerts`); Alertmanager routes them to the agent's webhook.
 
@@ -53,6 +55,33 @@ Settings come from the environment or a local `.env` (never committed): `PROMETH
 `AGENT_KUBECONFIG`, `GITOPS_REPO`, `GITOPS_BRANCH`, `TOOL_TIMEOUT_S`; the agent itself will also read
 `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL`.
 
+## The agent
+
+Alertmanager posts the voting alerts to `ai-sre-agent.ai-sre-agent.svc:8080/alertmanager`. The service answers at
+once and investigates in the background:
+
+1. the alert (redacted) and the six MCP tools go to an OpenAI-compatible LLM (`LLM_BASE_URL`, `LLM_MODEL`; now
+   `qwen/qwen3-14b` on OpenRouter, later the vLLM from gpu-inference-platform);
+2. the model calls tools through a real MCP session; every result is redacted (tokens, passwords, keys, IPs,
+   e-mails) and cut to size before the model sees it, and labelled `[call N]`;
+3. it answers with a JSON hypothesis: root cause, confidence, evidence as call numbers, mitigation as text;
+4. evidence is kept only if it points at a call that happened, and is shown with that call's real arguments and
+   result; the message goes to Slack, a resolved alert to the same thread;
+5. everything (the alert, every LLM turn, every tool call and result, the outcome) is written to `audit/` as JSONL.
+
+Limits: 12 LLM turns, 80k tokens, a timeout per tool call and per LLM call; the last turn has no tools, so the
+model has to conclude. The same alert group is investigated once per hour, at most two at a time.
+
+First end-to-end run, scenario 1 (bad deploy), 2026-10-31: the agent named the exact release commit and the missing
+image tag, cited `argocd_app_history`, `gitops_log` (with the diff) and `k8s_describe`, and suggested
+`git revert <sha>` on `lab`, the same as the expected answer written before the run. 2 LLM turns, 4 tool calls,
+10.9k tokens, $0.0015, 75 s from the alert firing to the Slack message.
+
+```bash
+uv run ai-sre-investigate VotingPodNotStarting --slack   # one investigation by hand, from Alertmanager's API
+scripts/agent-secret.sh                                  # LLM key + Slack token into the cluster
+```
+
 ## Status
 
 - [x] Stand: kind + Prometheus, Alertmanager, Grafana, Loki
@@ -60,4 +89,5 @@ Settings come from the environment or a local `.env` (never committed): `PROMETH
 - [x] 8 alerts + runbooks, each fired at least once
 - [x] Scenarios 1, 3, 4, 5, 7
 - [x] Read-only MCP server (Prometheus, Loki, Kubernetes, Argo CD, git history) + RBAC check
-- [ ] The agent: Alertmanager webhook → investigation → Slack
+- [x] The agent: Alertmanager webhook → investigation → Slack, redaction, audit, limits
+- [ ] Week 2: investigators + verifier, RAG over the runbooks, the backtest runner, MLflow, vLLM
