@@ -32,7 +32,7 @@ Every answer is bounded: long results are truncated and say so. Nothing here can
 def build_server(settings: Settings) -> MCPServer:
     prometheus = observability.HttpApi(settings.prometheus_url, settings.http_host_header, settings.tool_timeout_s)
     loki = observability.HttpApi(settings.loki_url, settings.http_host_header, settings.tool_timeout_s)
-    kube = Kube(settings.kubeconfig)
+    kube = Kube(settings.agent_kubeconfig)
     timeout = settings.tool_timeout_s
 
     @asynccontextmanager

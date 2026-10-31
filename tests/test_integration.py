@@ -30,7 +30,7 @@ def _stand_is_up() -> bool:
         ).raise_for_status()
     except httpx.HTTPError:
         return False
-    return Path(SETTINGS.kubeconfig).exists()
+    return Path(SETTINGS.agent_kubeconfig).exists()
 
 
 if not _stand_is_up():

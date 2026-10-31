@@ -25,7 +25,7 @@ def server(tmp_path: Path) -> Any:
     settings = Settings(
         prometheus_url="http://127.0.0.1:9",
         loki_url="http://127.0.0.1:9",
-        kubeconfig=str(tmp_path / "missing-kubeconfig"),
+        agent_kubeconfig=str(tmp_path / "missing-kubeconfig"),
         gitops_repo=str(tmp_path),
         tool_timeout_s=2,
     )
