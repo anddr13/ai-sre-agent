@@ -14,7 +14,7 @@ scenarios/01-bad-deploy/restore.sh   # undoes it, waits for the alert to clear
 | 3 | `03-kafka-broker-down` | SIGSTOP of one broker's JVM under load (see below) | `KafkaUnderReplicatedPartitions` |
 | 4 | `04-postgres-failover` | deletes the PostgreSQL primary pod under load | `PostgresPrimaryFailover` |
 | 5 | `05-postgres-connections` | commit lowering `max_connections` to 8, under load | `PostgresConnectionsHigh` |
-| 7 | `07-redis-oom` | commit lowering the Redis memory limit to 10Mi, under load | `ContainerOOMKilled` |
+| 7 | `07-redis-oom` | commit lowering the Redis memory request and limit to 10Mi, under load | `ContainerOOMKilled` |
 
 Scenarios 2, 6 and 8 come in week 2 (see [PLAN.md](../PLAN.md)).
 

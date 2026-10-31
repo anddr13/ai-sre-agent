@@ -1,0 +1,20 @@
+# The correct answer for scenario 7; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 7
+name: redis-oom
+alert: ContainerOOMKilled
+category: resources
+root_cause: >-
+  Revision {{revision}} of voting-gitops (branch lab) lowered the memory limit of the redis container from
+  {{old}} to {{new}}, below what Redis uses under load (and below its own maxmemory of 96mb, so Redis never
+  evicts before the kernel kills it). Redis is OOMKilled and restarts; while it is down vote-api cannot apply
+  its rate limit and returns 5xx, and the cached results are lost (result-api rebuilds them from PostgreSQL).
+must_mention:
+  - redis OOMKilled because its memory limit was lowered to {{new}} by revision {{revision}}
+  - impact on vote-api (5xx) and the cache
+evidence:
+  - kube_pod_container_status_last_terminated_reason{container="redis", reason="OOMKilled"} and restarts
+  - container_memory_working_set_bytes of redis reaching kube_pod_container_resource_limits (memory) = {{new}}
+  - Argo CD history of the data application / git log of voting-gitops lab with the limit change
+mitigation: >-
+  Revert {{revision}} in voting-gitops (lab) to restore the {{old}} limit. Keep maxmemory below the container
+  limit so Redis evicts instead of being killed.
