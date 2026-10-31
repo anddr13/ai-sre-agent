@@ -1,6 +1,6 @@
 # VotingApiLatencyHigh
 
-**Symptom.** The p99 response time of vote-api over the last minute is above 100 ms. The rule has no `for`
+**Symptom.** The p99 response time of vote-api over the last minute is above 50 ms. The rule has no `for`
 clause and a 1-minute window, so it is sensitive: it can fire on a short burst and resolve by itself.
 
 ## What to check
