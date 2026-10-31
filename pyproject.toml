@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 ai-sre-mcp = "ai_sre_agent.mcp_server.server:main"
 ai-sre-agent = "ai_sre_agent.service:main"
+ai-sre-investigate = "ai_sre_agent.cli:main"
 
 [dependency-groups]
 dev = [

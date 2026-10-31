@@ -29,6 +29,9 @@ scaled by KEDA on consumer lag), Kafka by Strimzi (3 brokers, voting-dual-role-0
 (cluster voting-pg, services voting-pg-rw / voting-pg-ro), Redis. Argo CD deploys everything from the
 voting-gitops repository (branch lab): Applications voting (the app), data (Kafka, PostgreSQL, Redis), alerts.
 Monitoring (Prometheus, Loki) is in namespace monitoring.
+voting-gitops layout: charts/voting (the app; image.tag in charts/voting/values.yaml), charts/data (Kafka,
+PostgreSQL, Redis; their settings in charts/data/values.yaml), charts/alerts, envs/local.yaml (this stand's
+overrides), apps/ (the Argo CD Applications). A commit "voting: release <sha>" is a new image tag.
 
 How to investigate:
 1. Read the alert: what is affected, since when.

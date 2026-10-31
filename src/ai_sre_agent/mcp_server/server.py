@@ -133,7 +133,10 @@ def build_server(settings: Settings) -> MCPServer:
         since: Annotated[str, Field(description="How far back, e.g. 2h, 1d (max 14d)")] = "1d",
         path: Annotated[
             str | None,
-            Field(description="Only commits touching this path, e.g. charts/voting or envs/local.yaml"),
+            Field(
+                description="Only commits touching this existing path, e.g. charts/voting or envs/local.yaml. "
+                "Omit it unless you know the path: a wrong path just returns no commits."
+            ),
         ] = None,
         max_count: Annotated[int, Field(description="Maximum commits (1-50)")] = 20,
         with_diff: Annotated[bool, Field(description="Include each commit's diff (cut to 4000 characters)")] = False,
