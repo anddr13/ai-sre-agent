@@ -122,8 +122,9 @@ argocd_sync() {
     local phase op_rev rev status health
     phase=$(kubectl -n argocd get application "$app" -o jsonpath='{.status.operationState.phase}')
     op_rev=$(kubectl -n argocd get application "$app" -o jsonpath='{.status.operationState.syncResult.revision}{.status.operationState.operation.sync.revision}')
+    # jsonpath prints no trailing newline, so read hits EOF and returns 1 even though it read the line.
     read -r rev status health < <(kubectl -n argocd get application "$app" \
-      -o jsonpath='{.status.sync.revision} {.status.sync.status} {.status.health.status}')
+      -o jsonpath='{.status.sync.revision} {.status.sync.status} {.status.health.status}') || true
     if [ "$phase" = Running ] && [[ "$op_rev" != *"$sha"* ]]; then
       log "terminating the running operation of $app (it is on another revision)"
       kubectl -n argocd patch application "$app" --type merge -p '{"status":{"operationState":{"phase":"Terminating"}}}' > /dev/null

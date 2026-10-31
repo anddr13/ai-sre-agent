@@ -1,13 +1,14 @@
 # PostgresConnectionsHigh
 
-**Symptom.** More than 80% of `max_connections` on an instance of `voting-pg` are in use. Above 100%
-new connections fail with `FATAL: sorry, too many clients already` / `too many connections`, and the services
-that need a new connection return 5xx or stop processing.
+**Symptom.** More than 80% of the connections available to clients on an instance of `voting-pg` are in use
+(`max_connections` minus `superuser_reserved_connections`, which only superusers may use). Above 100%
+new connections fail with `FATAL: sorry, too many clients already` / `remaining connection slots are reserved`,
+and the services that need a new connection return 5xx or stop processing.
 
 ## What to check
 
 1. Usage per instance: `cnpg_backends_total{namespace="voting"}` vs
-   `cnpg_pg_settings_setting{namespace="voting", name="max_connections"}`.
+   `cnpg_pg_settings_setting{namespace="voting", name=~"max_connections|superuser_reserved_connections"}`.
 2. Was `max_connections` changed recently? Compare the current setting with its history in Prometheus, and look at
    the `postgresql.parameters` of the `Cluster` resource and recent commits in voting-gitops.
 3. Who holds the connections: `cnpg_backends_total` by `usename` / `datname` / `state`; many `idle` connections

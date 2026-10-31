@@ -1,0 +1,20 @@
+# The correct answer for scenario 5; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 5
+name: postgres-connections
+alert: PostgresConnectionsHigh
+category: postgres
+root_cause: >-
+  Revision {{revision}} of voting-gitops (branch lab) lowered max_connections of the voting-pg cluster from
+  {{old}} to {{new}}. CloudNativePG restarted the instances with the new limit, and the clients (worker pods,
+  scaled up by KEDA, result-api, plus the operator's own connections) need more than that: new connections fail
+  with "sorry, too many clients already", the worker stops storing votes and Kafka consumer lag grows.
+must_mention:
+  - max_connections lowered to {{new}} by revision {{revision}}
+  - "too many clients" errors / the workers failing to store votes
+evidence:
+  - cnpg_pg_settings_setting{name="max_connections"} dropped from {{old}} to {{new}}; cnpg_backends_total close to it
+  - worker logs with "too many clients" (or connection errors) after the change
+  - Argo CD history of the data application / git log of voting-gitops lab with the max_connections change
+mitigation: >-
+  Revert {{revision}} in voting-gitops (lab) to restore max_connections {{old}}; CloudNativePG restarts the
+  instances and the workers recover by themselves.
