@@ -10,7 +10,7 @@ clause and a 1-minute window, so it is sensitive: it can fire on a short burst a
 2. Is anything else wrong at the same time: 5xx (`VotingHttp5xxRate`), consumer lag, Kafka or PostgreSQL alerts.
    Latency alone, with no errors, rarely needs a human at night.
 3. Latency over a longer window: p50/p95/p99 over 15 minutes from
-   `traefik_service_request_duration_seconds_bucket{service=~"voting-vote-api-.*"}`. A sustained rise is real;
+   `traefik_service_request_duration_seconds_bucket{exported_service=~"voting-vote-api-.*"}`. A sustained rise is real;
    a single spike is not.
 4. Did a deploy happen right before (Argo CD history of `voting`)? Pods starting up (cold JIT, new connections)
    cause short spikes after every rollout.

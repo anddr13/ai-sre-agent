@@ -5,7 +5,7 @@ have returned 5xx for 2 minutes. Users see failed votes or an empty results page
 
 ## What to check
 
-1. Which service and how bad: `sum by (service, code) (rate(traefik_service_requests_total{service=~"voting-.*"}[5m]))`.
+1. Which service and how bad: `sum by (exported_service, code) (rate(traefik_service_requests_total{exported_service=~"voting-.*"}[5m]))`.
 2. When it started, and whether it lines up with a deploy: Argo CD history of `voting`, `git log` of voting-gitops.
    5xx starting right after a sync points at the new version or its configuration.
 3. Logs of the failing service: `{namespace="voting", app="vote-api"} |= "error"` (or `result-api`).
