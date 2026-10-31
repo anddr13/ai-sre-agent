@@ -1,0 +1,115 @@
+# The agent in the cluster: Alertmanager posts to this Service, the pod investigates as the read-only
+# ServiceAccount from rbac.yaml. The LLM key and the Slack token come from the Secret ai-sre-agent-env, which is
+# created from a local .env by scripts/agent-secret.sh and never committed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-sre-agent
+  namespace: ai-sre-agent
+spec:
+  selector:
+    app.kubernetes.io/name: ai-sre-agent
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# The audit log of every investigation is the backtest dataset, so it outlives the pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-sre-agent-audit
+  namespace: ai-sre-agent
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-sre-agent
+  namespace: ai-sre-agent
+  labels:
+    app.kubernetes.io/name: ai-sre-agent
+spec:
+  replicas: 1
+  # One pod owns the audit volume and the in-memory dedup state.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-sre-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ai-sre-agent
+    spec:
+      serviceAccountName: ai-sre-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: ghcr.io/anddr13/ai-sre-agent:77d48da0b7ce
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: ai-sre-agent-env
+          env:
+            - name: PROMETHEUS_URL
+              value: http://kps-prometheus.monitoring.svc:9090
+            - name: LOKI_URL
+              value: http://loki.monitoring.svc:3100
+            - name: HTTP_HOST_HEADER
+              value: ""
+            # Empty: the in-cluster ServiceAccount token.
+            - name: AGENT_KUBECONFIG
+              value: ""
+            - name: GITOPS_URL
+              value: https://github.com/anddr13/voting-gitops.git
+            - name: GITOPS_REPO
+              value: /work/voting-gitops
+            - name: AUDIT_DIR
+              value: /audit
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 50m, memory: 192Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+            - name: audit
+              mountPath: /audit
+      volumes:
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: audit
+          persistentVolumeClaim:
+            claimName: ai-sre-agent-audit
