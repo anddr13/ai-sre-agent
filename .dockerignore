@@ -1,0 +1,8 @@
+.venv/
+.env
+audit/
+scenarios/.state/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.git/
