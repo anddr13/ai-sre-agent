@@ -1,0 +1,20 @@
+# The correct answer for scenario 1. break.sh fills in the {{...}} fields of this run and saves the result
+# in scenarios/.state/ before the alert fires, i.e. before the agent starts.
+scenario: 1
+name: bad-deploy
+alert: VotingPodNotStarting
+category: deploy
+root_cause: >-
+  Revision {{revision}} of voting-gitops (branch lab) changed image.tag of the voting chart from {{good_tag}}
+  to {{bad_tag}}, a tag that does not exist in ghcr.io/anddr13. The PreSync migrate Job (worker image)
+  is in ImagePullBackOff, so the Argo CD sync of the voting application is stuck and the release never rolls out.
+must_mention:
+  - ImagePullBackOff (or ErrImagePull) on the new image tag
+  - the revision {{revision}} (or the "voting: release" commit) as the change that caused it
+evidence:
+  - kube_pod_container_status_waiting_reason{namespace="voting", reason="ImagePullBackOff"} for the migrate pod
+  - pod events "Failed to pull image ... not found"
+  - Argo CD history of the voting application / git log of voting-gitops lab showing the tag change
+mitigation: >-
+  Roll the voting application back to the previous revision: git revert {{revision}} in voting-gitops (lab)
+  or an Argo CD rollback; the running pods were never replaced, so nothing else is needed.

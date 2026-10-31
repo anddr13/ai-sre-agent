@@ -11,3 +11,4 @@ __pycache__/
 
 # Investigations (may contain cluster data)
 audit/
+.state/
