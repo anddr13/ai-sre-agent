@@ -75,8 +75,11 @@ wait_alert() {
 load_start() {
   local name="k6-$1"
   docker rm -f "$name" > /dev/null 2>&1 || true
-  docker run -d --rm --name "$name" --network kind -i -e BASE_URL="http://$NODE:30080" \
-    -e RATE="$2" -e DURATION="$3" "$K6_IMAGE" run --quiet - < "$SCENARIOS_DIR/load.js" > /dev/null
+  # Detached, so the script cannot come in on stdin: copy it into the container before it starts.
+  docker create --rm --name "$name" --network kind -e BASE_URL="http://$NODE:30080" \
+    -e RATE="$2" -e DURATION="$3" "$K6_IMAGE" run --quiet /tmp/load.js > /dev/null
+  (cd "$SCENARIOS_DIR" && docker cp load.js "$name:/tmp/load.js")
+  docker start "$name" > /dev/null
   log "k6: $2 votes/s for $3 (container $name)"
 }
 load_stop() { docker rm -f "k6-$1" > /dev/null 2>&1 && log "k6 stopped" || true; }
@@ -148,7 +151,12 @@ container_pid() {
 
 # --- PostgreSQL ------------------------------------------------------------------------------------
 
-pg_primary() { kubectl -n "$NS" get pod -l cnpg.io/cluster=voting-pg,cnpg.io/instanceRole=primary -o jsonpath='{.items[0].metadata.name}'; }
+# Prints the primary pod, or "none" in the middle of a failover (no pod carries the primary label yet).
+pg_primary() {
+  local p
+  p=$(kubectl -n "$NS" get pod -l cnpg.io/cluster=voting-pg,cnpg.io/instanceRole=primary -o jsonpath='{.items[*].metadata.name}')
+  echo "${p:-none}"
+}
 
 # wait_pg_healthy TIMEOUT_S: all instances ready and a primary elected.
 wait_pg_healthy() {

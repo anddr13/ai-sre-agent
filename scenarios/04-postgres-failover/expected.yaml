@@ -1,0 +1,20 @@
+# The correct answer for scenario 4; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 4
+name: postgres-failover
+alert: PostgresPrimaryFailover
+category: postgres
+root_cause: >-
+  The primary instance {{old_primary}} of the CloudNativePG cluster voting-pg went away (its pod was deleted),
+  and the operator failed over to the replica. Between the loss of the primary and the promotion the worker's
+  writes failed (connection refused / terminated), so Kafka consumer lag grew; after the promotion the worker
+  reconnected through voting-pg-rw and the backlog drains. No data was lost (the votes stay in Kafka until stored).
+must_mention:
+  - failover: {{old_primary}} lost, the replica promoted to primary
+  - write errors / growing consumer lag during the failover, recovery afterwards
+evidence:
+  - cnpg_pg_replication_in_recovery changed from 1 to 0 on the new primary
+  - Cluster voting-pg status/events (currentPrimary changed, failing over) and the deleted pod {{old_primary}}
+  - worker logs with connection errors to voting-pg-rw; kafka_consumergroup_lag of vote-workers rising then falling
+mitigation: >-
+  None needed once the failover completed: confirm the new primary accepts writes and the lag drains; the old
+  instance rejoins as a replica by itself. If the cluster stays without a primary, check the operator logs.

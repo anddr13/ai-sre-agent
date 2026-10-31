@@ -1,0 +1,21 @@
+# The correct answer for scenario 3; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 3
+name: kafka-broker-down
+alert: KafkaUnderReplicatedPartitions
+category: kafka
+root_cause: >-
+  Kafka broker {{pod}} (one of three KRaft nodes) stopped responding: it dropped out of the in-sync replica
+  set of every partition it hosts, so the topics are under-replicated. The pod is still Running and Ready,
+  so Kubernetes does not see the failure. With replication factor 3 and min.insync.replicas 2, producers and
+  consumers keep working on the two remaining brokers; no data is lost yet, but one more broker failure would
+  stop writes.
+must_mention:
+  - under-replicated partitions caused by one broker ({{pod}}) missing from the ISR
+  - the cluster still has quorum / writes still succeed (min.insync.replicas 2 of 3)
+evidence:
+  - kafka_topic_partition_under_replicated_partition > 0 and kafka_topic_partition_in_sync_replica = 2 for the affected partitions
+  - partition leaders moved away from {{pod}} (kafka_topic_partition_leader)
+  - broker logs of the other brokers about {{pod}} (ISR shrink, fenced or unreachable broker); no new logs from {{pod}}
+mitigation: >-
+  Restart the hung broker pod {{pod}} (kubectl delete pod; Strimzi recreates it and it catches up), then watch
+  under-replicated partitions return to 0. Do not delete its PVC.
