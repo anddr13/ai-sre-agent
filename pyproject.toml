@@ -12,12 +12,14 @@ dependencies = [
     "openai>=2",
     "pydantic>=2.14.2",
     "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]
 ai-sre-mcp = "ai_sre_agent.mcp_server.server:main"
 ai-sre-agent = "ai_sre_agent.service:main"
 ai-sre-investigate = "ai_sre_agent.cli:main"
+ai-sre-backtest = "ai_sre_agent.backtest:main"
 
 [dependency-groups]
 dev = [

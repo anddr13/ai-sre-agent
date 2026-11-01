@@ -3,6 +3,12 @@ scenario: 7
 name: redis-oom
 alert: ContainerOOMKilled
 category: resources
+triage: wake
+# Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
+match:
+  - 'redis'
+  - 'oom|out of memory|memory'
+  - '{{revision7}}|{{new}}|limit'
 root_cause: >-
   Revision {{revision}} of voting-gitops (branch lab) lowered the memory limit of the redis container from
   {{old}} to {{new}}, below what Redis uses under load (and below its own maxmemory of 96mb, so Redis never
