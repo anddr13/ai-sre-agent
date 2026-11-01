@@ -1,0 +1,50 @@
+# The agent's own PostgreSQL: pgvector for the runbook RAG (database agent) and the MLflow backend (database
+# mlflow). Separate from voting-pg on purpose: scenarios 4-6 break that one, and the agent must keep its memory
+# while they do. No PodMonitor, so the stand's Postgres alerts never fire for it.
+# CloudNativePG writes the owner's credentials to the Secret ai-sre-db-app (username, password, host, uri...).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ai-sre-db
+  namespace: ai-sre-agent
+spec:
+  instances: 1
+  # The standard flavour ships pgvector; pinned like voting-pg.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-standard-trixie
+  bootstrap:
+    initdb:
+      database: agent
+      owner: agent
+  postgresql:
+    parameters:
+      shared_buffers: 64MB
+      max_connections: "30"
+  storage:
+    size: 2Gi
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 256Mi }
+---
+# Takes over the database made by initdb, so pgvector is declared rather than created by a script.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: ai-sre-db-agent
+  namespace: ai-sre-agent
+spec:
+  cluster: { name: ai-sre-db }
+  name: agent
+  owner: agent
+  extensions:
+    - name: vector
+      ensure: present
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: ai-sre-db-mlflow
+  namespace: ai-sre-agent
+spec:
+  cluster: { name: ai-sre-db }
+  name: mlflow
+  owner: agent

@@ -12,10 +12,12 @@ from typing import Any
 
 from mcp import Client
 
+from ai_sre_agent import tracking
 from ai_sre_agent.audit import Audit
 from ai_sre_agent.config import Settings
 from ai_sre_agent.investigator import Evidence, Investigation, McpTools, Tools
 from ai_sre_agent.mcp_server.server import build_server
+from ai_sre_agent.redact import Redactor
 
 MODEL = "rules"
 PROMPT_VERSION = "rules-v1"
@@ -35,17 +37,21 @@ class Session:
     def __init__(self, tools: Tools, audit: Audit):
         self._tools = tools
         self._audit = audit
+        self._redact = Redactor()
         self.calls = 0
 
     async def call(self, tool: str, finding: str, **arguments: Any) -> tuple[dict[str, Any], Evidence]:
         self.calls += 1
-        is_error, text = await self._tools.call(tool, arguments)
-        self._audit.write("tool", call=self.calls, name=tool, arguments=arguments, error=is_error, result=text)
+        with tracking.span(tool, "TOOL", {"call": self.calls, "arguments": arguments}) as span:
+            is_error, text = await self._tools.call(tool, arguments)
+            result = self._redact(text)
+            tracking.outputs(span, {"error": is_error, "result": result})
+        self._audit.write("tool", call=self.calls, name=tool, arguments=arguments, error=is_error, result=result)
         try:
-            data = {} if is_error else json.loads(text)
+            data = {} if is_error else json.loads(text)  # the rules read the raw result; only what is kept is redacted
         except ValueError:
             data = {}
-        return data, Evidence(self.calls, tool, arguments, finding, text[:600])
+        return data, Evidence(self.calls, tool, arguments, finding, result[:600])
 
 
 async def _latest_change(s: Session, path: str | None = None) -> tuple[str, Evidence]:
@@ -197,5 +203,8 @@ async def run(payload: dict[str, Any], settings: Settings) -> Investigation:
     firing = [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
     alertname = firing[0]["labels"].get("alertname", "alert") if firing else "alert"
     audit = Audit(settings.audit_dir, f"rules-{alertname}")
-    async with Client(build_server(settings)) as client:
-        return await investigate(payload, McpTools(client), audit)
+    with tracking.span("investigate", "AGENT", {"alertname": alertname, "agent": MODEL}) as span:
+        async with Client(build_server(settings)) as client:
+            result = await investigate(payload, McpTools(client), audit)
+        tracking.outputs(span, {"root_cause": result.root_cause, "triage": result.triage, "error": result.error})
+    return result

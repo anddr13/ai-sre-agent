@@ -53,6 +53,10 @@ class Settings:
 
     audit_dir: str = str(REPO_ROOT / "audit")
 
+    # MLflow tracking and tracing; empty means off. The backtest logs to its own experiment, ai-sre-backtest.
+    mlflow_tracking_uri: str = ""
+    mlflow_experiment: str = "ai-sre-agent"
+
     @classmethod
     def from_env(cls, env_file: Path | None = REPO_ROOT / ".env") -> "Settings":
         """Every field can be set as an upper-case environment variable of the same name."""

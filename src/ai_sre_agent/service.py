@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from ai_sre_agent import investigator
+from ai_sre_agent import investigator, tracking
 from ai_sre_agent.config import Settings
 from ai_sre_agent.investigator import Investigation
 from ai_sre_agent.slack import Slack
@@ -109,6 +109,7 @@ def main() -> None:
     settings = Settings.from_env()
     if not settings.llm_api_key:
         raise SystemExit("LLM_API_KEY is not set")
+    tracking.setup(settings.mlflow_tracking_uri, settings.mlflow_experiment)
     uvicorn.run(
         create_app(settings),
         host=os.environ.get("HOST", "127.0.0.1"),

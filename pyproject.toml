@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.28.1",
     "kubernetes-asyncio>=36.1.0",
     "mcp>=2.3.0",
+    "mlflow-skinny>=3.16,<3.17",
     "openai>=2",
     "pydantic>=2.14.2",
     "python-dotenv>=1.2.4",

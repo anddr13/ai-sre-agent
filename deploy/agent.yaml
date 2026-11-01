@@ -79,6 +79,9 @@ spec:
               value: /work/voting-gitops
             - name: AUDIT_DIR
               value: /audit
+            # Every real investigation becomes a trace in the experiment ai-sre-agent.
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.ai-sre-agent.svc
           readinessProbe:
             httpGet:
               path: /healthz

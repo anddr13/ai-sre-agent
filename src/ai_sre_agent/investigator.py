@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from mcp import Client
 from openai import AsyncOpenAI
 
+from ai_sre_agent import tracking
 from ai_sre_agent.audit import Audit
 from ai_sre_agent.config import Settings
 from ai_sre_agent.mcp_server.server import build_server
@@ -260,9 +261,11 @@ async def investigate(
             if forced:
                 stopped_by = "max_tokens" if out_of_budget else "max_steps"
                 messages.append({"role": "user", "content": FINAL_NUDGE})
-            reply = await asyncio.wait_for(
-                llm.complete(messages, specs, allow_tools=not forced), settings.llm_timeout_s
-            )
+            with tracking.span(llm.model, "CHAT_MODEL", {"messages": messages, "allow_tools": not forced}) as span:
+                reply = await asyncio.wait_for(
+                    llm.complete(messages, specs, allow_tools=not forced), settings.llm_timeout_s
+                )
+                tracking.outputs(span, asdict(reply))
             steps += 1
             tokens += reply.tokens
             cost += reply.cost
@@ -297,20 +300,22 @@ async def investigate(
             )
             for call in reply.tool_calls:
                 number = len(calls) + 1
-                try:
-                    arguments = json.loads(call.arguments or "{}")
-                    if not isinstance(arguments, dict):
-                        raise ValueError("arguments must be a JSON object")
-                    is_error, text = await asyncio.wait_for(
-                        tools.call(call.name, arguments), settings.tool_timeout_s + 5
-                    )
-                except ValueError as exc:  # includes malformed JSON
-                    arguments, is_error, text = {}, True, f"invalid arguments: {exc}"
-                except TimeoutError:
-                    arguments, is_error, text = arguments, True, "the tool did not answer in time"
-                result = redact(text)
-                if len(result) > settings.max_tool_result_chars:
-                    result = result[: settings.max_tool_result_chars] + "\n... [truncated]"
+                with tracking.span(call.name, "TOOL", {"call": number, "arguments": call.arguments}) as span:
+                    try:
+                        arguments = json.loads(call.arguments or "{}")
+                        if not isinstance(arguments, dict):
+                            raise ValueError("arguments must be a JSON object")
+                        is_error, text = await asyncio.wait_for(
+                            tools.call(call.name, arguments), settings.tool_timeout_s + 5
+                        )
+                    except ValueError as exc:  # includes malformed JSON
+                        arguments, is_error, text = {}, True, f"invalid arguments: {exc}"
+                    except TimeoutError:
+                        arguments, is_error, text = arguments, True, "the tool did not answer in time"
+                    result = redact(text)
+                    if len(result) > settings.max_tool_result_chars:
+                        result = result[: settings.max_tool_result_chars] + "\n... [truncated]"
+                    tracking.outputs(span, {"error": is_error, "result": result})
                 calls.append((call.name, arguments, result))
                 audit.write("tool", call=number, name=call.name, arguments=arguments, error=is_error, result=result)
                 prefix = f"[call {number}] {'ERROR ' if is_error else ''}"
@@ -366,5 +371,8 @@ async def run(payload: dict[str, Any], settings: Settings) -> Investigation:
     firing = [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
     alertname = firing[0]["labels"].get("alertname", "alert") if firing else "alert"
     audit = Audit(settings.audit_dir, alertname)
-    async with Client(build_server(settings)) as client:
-        return await investigate(payload, settings, OpenAiLlm(settings), McpTools(client), audit)
+    with tracking.span("investigate", "AGENT", {"alertname": alertname}) as span:
+        async with Client(build_server(settings)) as client:
+            result = await investigate(payload, settings, OpenAiLlm(settings), McpTools(client), audit)
+        tracking.outputs(span, {"root_cause": result.root_cause, "triage": result.triage, "error": result.error})
+    return result

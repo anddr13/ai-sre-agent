@@ -29,7 +29,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ai_sre_agent import investigator, rules
+from ai_sre_agent import investigator, rules, tracking
 from ai_sre_agent.cli import ALERTMANAGER_URL, webhook_payload
 from ai_sre_agent.config import REPO_ROOT, Settings
 from ai_sre_agent.investigator import Investigation
@@ -207,6 +207,25 @@ async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, ou
     )
 
 
+def totals(results: list[Result]) -> dict[str, float]:
+    """The scores of a backtest: the last lines of summary.md and the MLflow metrics."""
+    answers = [r.alert_to_answer_s for r in results if r.alert_to_answer_s is not None]
+    scores = {
+        "scenarios": len(results),
+        "top1": sum(r.top1 for r in results),
+        "top3": sum(r.top3 for r in results),
+        "triage": sum(r.triage_ok for r in results),
+        "wrong_but_sure": sum(1 for r in results if not r.top1 and r.confidence == "high"),
+        "median_investigation_s": statistics.median(r.investigation_s for r in results),
+        "median_cost_usd": statistics.median(r.cost_usd for r in results),
+        "total_cost_usd": sum(r.cost_usd for r in results),
+        "median_tokens": statistics.median(r.tokens for r in results),
+    }
+    if answers:
+        scores["median_alert_to_answer_s"] = statistics.median(answers)
+    return scores
+
+
 def summary(results: list[Result], label: str) -> str:
     def yes(value: bool) -> str:
         return "✅" if value else "❌"
@@ -227,21 +246,43 @@ def summary(results: list[Result], label: str) -> str:
             f" | ${r.cost_usd:.4f} |"
         )
     if results:
-        n = len(results)
-        answers = [r.alert_to_answer_s for r in results if r.alert_to_answer_s is not None]
-        wrong_but_sure = sum(1 for r in results if not r.top1 and r.confidence == "high")
+        t, n = totals(results), len(results)
         lines += [
             "",
-            f"- **Top-1**: {sum(r.top1 for r in results)}/{n}, **top-3**: {sum(r.top3 for r in results)}/{n},"
-            f" **triage**: {sum(r.triage_ok for r in results)}/{n}",
-            f'- **Wrong but "high" confidence**: {wrong_but_sure}/{n}',
-            f"- **Median alert → answer**: {statistics.median(answers) if answers else 'n/a'}s,"
-            f" median investigation {statistics.median(r.investigation_s for r in results)}s",
-            f"- **Median cost**: ${statistics.median(r.cost_usd for r in results):.4f},"
-            f" total ${sum(r.cost_usd for r in results):.4f},"
-            f" median tokens {statistics.median(r.tokens for r in results)}",
+            f"- **Top-1**: {t['top1']}/{n}, **top-3**: {t['top3']}/{n}, **triage**: {t['triage']}/{n}",
+            f'- **Wrong but "high" confidence**: {t["wrong_but_sure"]}/{n}',
+            f"- **Median alert → answer**: {t.get('median_alert_to_answer_s', 'n/a')}s,"
+            f" median investigation {t['median_investigation_s']}s",
+            f"- **Median cost**: ${t['median_cost_usd']:.4f}, total ${t['total_cost_usd']:.4f},"
+            f" median tokens {t['median_tokens']}",
         ]
     return "\n".join(lines) + "\n"
+
+
+def _params(args: argparse.Namespace, scenarios: list[str], settings: Settings) -> dict[str, Any]:
+    """What makes two backtests comparable: the agent, the model, the prompt and the code."""
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=REPO_ROOT)
+    llm = args.agent == "llm"
+    return {
+        "agent": args.agent,
+        "model": settings.llm_model if llm else rules.MODEL,
+        "prompt_version": investigator.PROMPT_VERSION if llm else rules.PROMPT_VERSION,
+        "scenarios": ",".join(scenarios),
+        "runs": args.runs,
+        "commit": commit.stdout.strip(),
+    }
+
+
+def _scenario_metrics(r: Result) -> dict[str, float]:
+    metrics = {
+        f"{r.scenario}/top1": float(r.top1),
+        f"{r.scenario}/top3": float(r.top3),
+        f"{r.scenario}/triage": float(r.triage_ok),
+        f"{r.scenario}/cost_usd": r.cost_usd,
+    }
+    if r.alert_to_answer_s is not None:
+        metrics[f"{r.scenario}/alert_to_answer_s"] = r.alert_to_answer_s
+    return metrics
 
 
 async def main_async(args: argparse.Namespace) -> None:
@@ -250,27 +291,34 @@ async def main_async(args: argparse.Namespace) -> None:
     out = RESULTS_DIR / f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{args.label}"
     out.mkdir(parents=True, exist_ok=True)
     stand = Stand(settings)
+    tracking.setup(settings.mlflow_tracking_uri, "ai-sre-backtest")
     silence = None if args.no_silence else await stand.silence(hours=6)
     results: list[Result] = []
     try:
-        for run in range(1, args.runs + 1):
-            for name in scenarios:
-                print(f"{name} #{run} ...", flush=True)
-                try:
-                    result = await run_scenario(name, run, settings, stand, out, args.agent)
-                except Exception as exc:  # a scenario that cannot run is reported, the others still run
-                    print(f"  FAILED: {exc}", flush=True)
-                    (out / "errors.log").open("a", encoding="utf-8").write(f"{name} #{run}: {exc}\n")
-                    continue
-                results.append(result)
-                with (out / "results.jsonl").open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
-                print(
-                    f"  top-1 {result.top1}, top-3 {result.top3}, triage {result.triage} ({result.triage_ok}),"
-                    f" {result.alert_to_answer_s}s, ${result.cost_usd:.4f}: {result.hypotheses[:1]}",
-                    flush=True,
-                )
-                (out / "summary.md").write_text(summary(results, args.label), encoding="utf-8")
+        with tracking.run(args.label, _params(args, scenarios, settings)):
+            for run in range(1, args.runs + 1):
+                for name in scenarios:
+                    print(f"{name} #{run} ...", flush=True)
+                    try:
+                        result = await run_scenario(name, run, settings, stand, out, args.agent)
+                    except Exception as exc:  # a scenario that cannot run is reported, the others still run
+                        print(f"  FAILED: {exc}", flush=True)
+                        (out / "errors.log").open("a", encoding="utf-8").write(f"{name} #{run}: {exc}\n")
+                        continue
+                    results.append(result)
+                    with (out / "results.jsonl").open("a", encoding="utf-8") as f:
+                        f.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
+                    print(
+                        f"  top-1 {result.top1}, top-3 {result.top3}, triage {result.triage} ({result.triage_ok}),"
+                        f" {result.alert_to_answer_s}s, ${result.cost_usd:.4f}: {result.hypotheses[:1]}",
+                        flush=True,
+                    )
+                    (out / "summary.md").write_text(summary(results, args.label), encoding="utf-8")
+                    tracking.log_metrics(_scenario_metrics(result), step=run)
+            if results:
+                tracking.log_metrics(totals(results))
+            for name in ("summary.md", "results.jsonl", "errors.log"):
+                tracking.log_artifact(out / name)
     finally:
         if silence:
             await stand.unsilence(silence)
