@@ -10,6 +10,7 @@ from ai_sre_agent.investigator import Investigation
 
 API = "https://slack.com/api/chat.postMessage"
 CONFIDENCE = {"high": ":large_green_circle:", "medium": ":large_yellow_circle:", "low": ":red_circle:"}
+TRIAGE = {"wake": "wake someone now", "morning": "can wait until morning", "noise": "noise, no action"}
 
 
 def _call(tool: str, arguments: dict[str, Any]) -> str:
@@ -41,7 +42,7 @@ def blocks(inv: Investigation) -> list[dict[str, Any]]:
                     {
                         "type": "mrkdwn",
                         "text": f"*Confidence*\n{CONFIDENCE.get(inv.confidence, '')} {inv.confidence}"
-                        + ("\n*Noise*: no action needed" if inv.noise else ""),
+                        f"\n*Triage*: {TRIAGE.get(inv.triage, inv.triage)}",
                     },
                 ],
             }
@@ -57,6 +58,9 @@ def blocks(inv: Investigation) -> list[dict[str, Any]]:
                     },
                 }
             )
+        if inv.alternatives:
+            others = "\n".join(f"• {_code(a, 400)}" for a in inv.alternatives)
+            body.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Other candidates*\n{others}"}})
         if not inv.evidence:
             body.append({"type": "section", "text": {"type": "mrkdwn", "text": "_No evidence cited._"}})
         body.append(

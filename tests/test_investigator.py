@@ -30,7 +30,8 @@ ANSWER = {
     "confidence": "high",
     "evidence": [{"call": 1, "finding": "ImagePullBackOff"}, {"call": 7, "finding": "made up"}],
     "mitigation": "git revert abc123 on branch lab",
-    "noise": False,
+    "alternatives": ["the registry is down"],
+    "triage": "wake",
 }
 
 
@@ -95,6 +96,8 @@ async def test_tool_call_then_answer(tmp_path: Path) -> None:
     assert tools.calls == [("k8s_events", {"namespace": "voting"})]
     assert inv.stopped_by == "answer"
     assert inv.confidence == "high"
+    assert inv.hypotheses == [ANSWER["root_cause"], "the registry is down"]
+    assert inv.triage == "wake" and not inv.noise
     assert (inv.steps, inv.tool_calls, inv.tokens) == (2, 1, 150)
     # Evidence only for calls that happened, with the real arguments and result.
     assert [e.call for e in inv.evidence] == [1]
@@ -169,3 +172,9 @@ async def test_audit_records_every_step(tmp_path: Path) -> None:
     inv = await investigate(PAYLOAD, settings(tmp_path), llm, FakeTools(), Audit(str(tmp_path), "x"))
 
     assert audit_events(inv.audit_path) == ["alert", "start", "llm", "tool", "llm", "result"]
+
+
+async def test_unknown_triage_defaults_to_wake(tmp_path: Path) -> None:
+    llm = ScriptedLlm([answer_reply(ANSWER | {"triage": "maybe"})])
+    inv = await investigate(PAYLOAD, settings(tmp_path), llm, FakeTools(), Audit(str(tmp_path), "x"))
+    assert inv.triage == "wake"

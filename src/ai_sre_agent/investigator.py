@@ -6,6 +6,7 @@ every step is written to the audit log, and the loop is bounded by steps, tokens
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -42,17 +43,25 @@ How to investigate:
 5. Stop as soon as the evidence supports one cause. Be economical: usually 4-8 tool calls are enough.
 
 Every tool result is labelled [call N]. Cite those numbers as evidence. Separate the cause from its symptoms.
-If the alert looks like noise (a short spike that resolved by itself, no user impact), say so.
+Triage the alert: "wake" if users are affected or will be soon and someone must act now; "morning" if it needs a
+fix but can wait for working hours; "noise" if it needs no action (a short spike that resolved by itself, no
+errors, no user impact).
 The mitigation is advice for a human (for example "git revert <sha> on branch lab of voting-gitops"),
 never something you did.
 
 When done, answer with only this JSON object, no other text:
 {"summary": "<one sentence: what is broken and why>",
- "root_cause": "<the cause, with the specific object, revision or setting>",
+ "root_cause": "<the most likely cause, with the specific object, revision or setting>",
+ "alternatives": ["<the second most likely cause>", "<the third>"],
  "confidence": "high" | "medium" | "low",
  "evidence": [{"call": <N>, "finding": "<what this result shows>"}],
  "mitigation": "<what a human should do now>",
- "noise": <true if this alert needs no action, else false>}"""
+ "triage": "wake" | "morning" | "noise"}
+"alternatives" may be empty when the evidence leaves no other candidate."""
+
+# Changes with every edit of the prompt, so backtest results can be grouped by prompt version.
+PROMPT_VERSION = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8]
+TRIAGE = ("wake", "morning", "noise")
 
 FINAL_NUDGE = (
     "The investigation budget is used up. Give your final answer now, as the JSON object described in the "
@@ -164,7 +173,8 @@ class Investigation:
     root_cause: str
     confidence: str
     mitigation: str
-    noise: bool
+    triage: str  # wake | morning | noise
+    alternatives: list[str]
     evidence: list[Evidence]
     stopped_by: str  # answer | max_steps | max_tokens | error
     model: str
@@ -176,6 +186,17 @@ class Investigation:
     audit_path: str
     error: str = ""
     alert_started_at: str = ""
+    prompt_version: str = PROMPT_VERSION
+    finished_at: str = ""
+
+    @property
+    def noise(self) -> bool:
+        return self.triage == "noise"
+
+    @property
+    def hypotheses(self) -> list[str]:
+        """The ranked candidates: the root cause first, then the alternatives."""
+        return [h for h in (self.root_cause, *self.alternatives) if h][:3]
 
 
 # --- the loop -----------------------------------------------------------------------------------------
@@ -299,6 +320,9 @@ async def investigate(
         audit.write("error", error=error)
 
     answer = answer or {}
+    triage = str(answer.get("triage") or "").lower()
+    if triage not in TRIAGE:  # unknown or missing: never silence an alert by accident
+        triage = "wake"
     evidence = []
     for item in answer.get("evidence") or []:
         if not isinstance(item, dict):
@@ -318,7 +342,8 @@ async def investigate(
         root_cause=str(answer.get("root_cause") or ""),
         confidence=str(answer.get("confidence") or "low"),
         mitigation=str(answer.get("mitigation") or ""),
-        noise=bool(answer.get("noise", False)),
+        triage=triage,
+        alternatives=[str(a) for a in (answer.get("alternatives") or []) if a][:2],
         evidence=evidence,
         stopped_by=stopped_by,
         model=llm.model,
@@ -330,6 +355,7 @@ async def investigate(
         audit_path=str(audit.path),
         error=error,
         alert_started_at=min((a.get("startsAt", "") for a in firing), default=""),
+        finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     )
     audit.write("result", **asdict(investigation))
     return investigation
