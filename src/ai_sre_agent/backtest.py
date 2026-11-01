@@ -3,6 +3,7 @@ that was written down before it started, put the stand back.
 
     uv run ai-sre-backtest                          # all eight scenarios, once
     uv run ai-sre-backtest --scenarios 01,08 --runs 3 --label stability
+    uv run ai-sre-backtest --agent rules --label rules     # the baseline without an LLM
 
 For every scenario: wait until the stand is quiet, scenarios/NN/break.sh (which writes the expected answer and
 waits for the alert), fetch the alert from Alertmanager, investigate, score, scenarios/NN/restore.sh (always).
@@ -28,7 +29,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ai_sre_agent import investigator
+from ai_sre_agent import investigator, rules
 from ai_sre_agent.cli import ALERTMANAGER_URL, webhook_payload
 from ai_sre_agent.config import REPO_ROOT, Settings
 from ai_sre_agent.investigator import Investigation
@@ -164,7 +165,7 @@ def _seconds_between(start: str, end: str) -> float | None:
     return round((b - a).total_seconds(), 1)
 
 
-async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, out: Path) -> Result:
+async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, out: Path, agent: str) -> Result:
     log = out / "logs" / f"{name}-{run}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     still = await stand.settle()
@@ -174,7 +175,8 @@ async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, ou
     try:
         await asyncio.to_thread(run_script, directory / "break.sh", log)
         expected = yaml.safe_load((SCENARIOS_DIR / ".state" / f"{name}.expected.yaml").read_text(encoding="utf-8"))
-        inv = await investigator.run(await _payload(expected["alert"], settings), settings)
+        payload = await _payload(expected["alert"], settings)
+        inv = await (rules.run if agent == "rules" else investigator.run)(payload, settings)
     finally:
         await asyncio.to_thread(run_script, directory / "restore.sh", log)
 
@@ -255,7 +257,7 @@ async def main_async(args: argparse.Namespace) -> None:
             for name in scenarios:
                 print(f"{name} #{run} ...", flush=True)
                 try:
-                    result = await run_scenario(name, run, settings, stand, out)
+                    result = await run_scenario(name, run, settings, stand, out, args.agent)
                 except Exception as exc:  # a scenario that cannot run is reported, the others still run
                     print(f"  FAILED: {exc}", flush=True)
                     (out / "errors.log").open("a", encoding="utf-8").write(f"{name} #{run}: {exc}\n")
@@ -282,6 +284,7 @@ def main() -> None:
     parser.add_argument("--scenarios", default="", help="comma-separated prefixes, e.g. 01,08 (default: all)")
     parser.add_argument("--runs", type=int, default=1, help="how many times to run each scenario")
     parser.add_argument("--label", default="baseline", help="a name for this run, part of the results directory")
+    parser.add_argument("--agent", choices=["llm", "rules"], default="llm", help="the LLM agent or the rule baseline")
     parser.add_argument("--no-silence", action="store_true", help="let the agent in the cluster answer too")
     asyncio.run(main_async(parser.parse_args()))
 
