@@ -3,6 +3,11 @@ scenario: 3
 name: kafka-broker-down
 alert: KafkaUnderReplicatedPartitions
 category: kafka
+triage: wake
+# Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
+match:
+  - '{{pod}}'
+  - 'replica|isr|in-sync|broker'
 root_cause: >-
   Kafka broker {{pod}} (one of three KRaft nodes) stopped responding: it dropped out of the in-sync replica
   set of every partition it hosts, so the topics are under-replicated. The pod is still Running and Ready,

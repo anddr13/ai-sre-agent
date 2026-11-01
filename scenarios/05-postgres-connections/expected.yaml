@@ -3,6 +3,11 @@ scenario: 5
 name: postgres-connections
 alert: PostgresConnectionsHigh
 category: postgres
+triage: wake
+# Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
+match:
+  - 'connection'
+  - '{{revision7}}|max_connections.{0,40}\b{{new}}\b|\b{{new}}\b.{0,40}connection'
 root_cause: >-
   Revision {{revision}} of voting-gitops (branch lab) lowered max_connections of the voting-pg cluster from
   {{old}} to {{new}}. CloudNativePG restarted the instances with the new limit, and the clients (worker pods,
@@ -10,7 +15,7 @@ root_cause: >-
   with "sorry, too many clients already", the worker stops storing votes and Kafka consumer lag grows.
 must_mention:
   - max_connections lowered to {{new}} by revision {{revision}}
-  - "too many clients" errors / the workers failing to store votes
+  - '"too many clients" errors / the workers failing to store votes'
 evidence:
   - cnpg_pg_settings_setting{name="max_connections"} dropped from {{old}} to {{new}}; cnpg_backends_total close to it
   - worker logs with "too many clients" (or connection errors) after the change

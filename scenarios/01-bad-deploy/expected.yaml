@@ -4,6 +4,11 @@ scenario: 1
 name: bad-deploy
 alert: VotingPodNotStarting
 category: deploy
+triage: wake
+# Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
+match:
+  - '{{revision7}}'
+  - 'image|tag|pull'
 root_cause: >-
   Revision {{revision}} of voting-gitops (branch lab) changed image.tag of the voting chart from {{good_tag}}
   to {{bad_tag}}, a tag that does not exist in ghcr.io/anddr13. The PreSync migrate Job (worker image)

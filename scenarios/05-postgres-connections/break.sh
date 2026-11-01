@@ -16,7 +16,7 @@ sha=$(gitops_push)
 log "pushed ${sha:0:7}: max_connections $old -> $LIMIT"
 save_state $S sha "$sha"
 
-sed -e "s/{{revision}}/$sha/g" -e "s/{{old}}/$old/g" -e "s/{{new}}/$LIMIT/g" \
+sed -e "s/{{revision}}/$sha/g" -e "s/{{revision7}}/${sha:0:7}/g" -e "s/{{old}}/$old/g" -e "s/{{new}}/$LIMIT/g" \
   "$(dirname "$0")/expected.yaml" > "$STATE_DIR/$S.expected.yaml"
 log "expected answer: $STATE_DIR/$S.expected.yaml"
 
