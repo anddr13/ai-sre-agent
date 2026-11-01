@@ -1,0 +1,14 @@
+
+$ scenarios\06-replica-lag\break.sh
+[23:06:44] PostgreSQL cluster ready, primary voting-pg-1
+[23:06:44] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/06-replica-lag.expected.yaml
+[23:06:47] k6: 300 votes/s for 20m (container k6-06-replica-lag)
+[23:07:08] WAL replay paused on voting-pg-2
+[23:07:08] waiting for PostgresReplicationLag to be firing (up to 600s)
+[23:09:34] PostgresReplicationLag is firing after 146s
+
+$ scenarios\06-replica-lag\restore.sh
+[23:09:38] WAL replay resumed on voting-pg-2
+[23:09:40] k6 stopped
+[23:09:40] waiting for PostgresReplicationLag to be resolved (up to 600s)
+[23:10:32] PostgresReplicationLag is not firing after 52s
