@@ -1,0 +1,25 @@
+# The correct answer for scenario 6; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 6
+name: replica-lag
+alert: PostgresReplicationLag
+category: postgres
+# Stale results are a degradation, not an outage: both are acceptable, "noise" is not.
+triage: wake|morning
+# Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
+match:
+  - '{{replica}}|replica|standby'
+  - 'replay|lag|behind|stale|apply'
+root_cause: >-
+  The replica {{replica}} of voting-pg receives WAL from the primary {{primary}} but does not apply it (replay
+  stalled), while the primary takes a steady stream of writes. Its replication lag grows without bound, and
+  everything that reads through voting-pg-ro (result-api) sees stale data.
+must_mention:
+  - the replica {{replica}} is behind because replay is not keeping up / stalled, not because of the network
+  - the impact: stale reads through voting-pg-ro
+evidence:
+  - cnpg_pg_replication_lag of {{replica}} growing; cnpg_pg_replication_is_wal_receiver_up = 1 (WAL still arrives)
+  - cnpg_pg_stat_replication_replay_lag_seconds / replay_diff_bytes on the primary growing for {{replica}}
+  - steady write rate (worker_votes_total) on the primary
+mitigation: >-
+  Resume or unblock replay on {{replica}} (pg_wal_replay_resume, or remove whatever starves it); until it catches
+  up, point the readers at voting-pg-rw.

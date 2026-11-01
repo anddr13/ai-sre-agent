@@ -1,0 +1,22 @@
+# The correct answer for scenario 2; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 2
+name: config-regression
+alert: VotingHttp5xxRate
+category: deploy
+triage: wake
+# Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
+match:
+  - 'rate.?limit'
+  - '{{revision7}}|3s|config|env'
+root_cause: >-
+  Revision {{revision}} of voting-gitops (branch lab) changed vote-api's RATE_LIMIT_SECONDS from "3" to "3s".
+  vote-api parses it as a number (NaN), Redis rejects SET ... EX NaN, and every vote request fails with 500.
+  The pods are Ready, so the rollout looked healthy.
+must_mention:
+  - the RATE_LIMIT_SECONDS change ("3s") in revision {{revision}} as the cause of the 5xx
+evidence:
+  - traefik_service_requests_total{exported_service=~"voting-vote-api.*", code="500"} rising right after the sync
+  - vote-api logs with the Redis error "value is not an integer or out of range"
+  - git log / Argo CD history of voting with the RATE_LIMIT_SECONDS change
+mitigation: >-
+  Revert {{revision}} in voting-gitops (lab); vote-api rolls back to RATE_LIMIT_SECONDS "3" and the 5xx stop.

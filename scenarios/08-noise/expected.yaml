@@ -1,0 +1,21 @@
+# The correct answer for scenario 8; break.sh fills in {{...}} and saves it in scenarios/.state/ before the alert fires.
+scenario: 8
+name: noise
+alert: VotingApiLatencyHigh
+category: triage
+# Scoring: only the triage label counts here; any explanation is fine if it says "noise".
+triage: noise
+match: []
+root_cause: >-
+  Nothing is broken. A short burst of traffic raised vote-api's p99 latency above the deliberately sensitive 50 ms
+  threshold for about a minute; there were no errors and latency went back to normal by itself. The release
+  {{revision}} right before it only changed the stand name shown in the UI and is unrelated.
+must_mention:
+  - noise / no action: transient latency spike, no errors, resolved by itself
+  - the release {{revision}} is not the cause (it only changed cloudName)
+evidence:
+  - p99 of traefik_service_request_duration_seconds over a longer window back to normal
+  - no 5xx (traefik_service_requests_total with code 5xx flat) and no other alerts
+  - the diff of {{revision}}: only cloudName
+mitigation: >-
+  No action now. In working hours, tune VotingApiLatencyHigh (longer window, a for clause) so it stops paging.
