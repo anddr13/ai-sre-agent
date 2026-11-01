@@ -56,7 +56,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/anddr13/ai-sre-agent:77d48da0b7ce
+          image: ghcr.io/anddr13/ai-sre-agent:e31b73c2edc2
           ports:
             - name: http
               containerPort: 8080
