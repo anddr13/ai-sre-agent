@@ -286,6 +286,7 @@ def main() -> None:
     parser.add_argument("--label", default="baseline", help="a name for this run, part of the results directory")
     parser.add_argument("--agent", choices=["llm", "rules"], default="llm", help="the LLM agent or the rule baseline")
     parser.add_argument("--no-silence", action="store_true", help="let the agent in the cluster answer too")
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # the Windows console is cp1251
     asyncio.run(main_async(parser.parse_args()))
 
 
