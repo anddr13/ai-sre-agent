@@ -4,6 +4,7 @@ that was written down before it started, put the stand back.
     uv run ai-sre-backtest                          # all eight scenarios, once
     uv run ai-sre-backtest --scenarios 01,08 --runs 3 --label stability
     uv run ai-sre-backtest --agent rules --label rules     # the baseline without an LLM
+    uv run ai-sre-backtest --agent team --label team       # investigators + verifier
 
 For every scenario: wait until the stand is quiet, scenarios/NN/break.sh (which writes the expected answer and
 waits for the alert), fetch the alert from Alertmanager, investigate, score, scenarios/NN/restore.sh (always).
@@ -30,7 +31,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ai_sre_agent import investigator, rag, rules, tracking
+from ai_sre_agent import investigator, rag, rules, team, tracking
 from ai_sre_agent.cli import ALERTMANAGER_URL, webhook_payload
 from ai_sre_agent.config import REPO_ROOT, Settings
 from ai_sre_agent.investigator import Investigation
@@ -192,7 +193,7 @@ async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, ou
         await asyncio.to_thread(run_script, directory / "break.sh", log)
         expected = yaml.safe_load((SCENARIOS_DIR / ".state" / f"{name}.expected.yaml").read_text(encoding="utf-8"))
         payload = await _payload(expected["alert"], settings)
-        inv = await (rules.run if agent == "rules" else investigator.run)(payload, settings)
+        inv = await {"rules": rules.run, "team": team.run}.get(agent, investigator.run)(payload, settings)
     finally:
         await asyncio.to_thread(run_script, directory / "restore.sh", log)
 
@@ -278,11 +279,12 @@ def summary(results: list[Result], label: str) -> str:
 def _params(args: argparse.Namespace, scenarios: list[str], settings: Settings) -> dict[str, Any]:
     """What makes two backtests comparable: the agent, the model, the prompt and the code."""
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=REPO_ROOT)
-    llm = args.agent == "llm"
+    llm = args.agent != "rules"
+    prompts = {"llm": investigator.PROMPT_VERSION, "team": team.PROMPT_VERSION, "rules": rules.PROMPT_VERSION}
     return {
         "agent": args.agent,
         "model": settings.llm_model if llm else rules.MODEL,
-        "prompt_version": investigator.PROMPT_VERSION if llm else rules.PROMPT_VERSION,
+        "prompt_version": prompts[args.agent],
         "scenarios": ",".join(scenarios),
         "runs": args.runs,
         "rag": llm and bool(settings.rag_database_url),
@@ -307,7 +309,7 @@ async def main_async(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
     if args.no_rag:
         settings = dataclasses.replace(settings, rag_database_url="")
-    elif settings.rag_database_url and args.agent == "llm":
+    elif settings.rag_database_url and args.agent != "rules":
         # The corpus is the runbooks of this checkout, so a run is reproducible from its commit.
         model = rag.embedder(settings.embedding_cache_dir)
         embedded, deleted = await rag.sync(settings.rag_database_url, model, rag.corpus())
@@ -357,7 +359,12 @@ def main() -> None:
     parser.add_argument("--scenarios", default="", help="comma-separated prefixes, e.g. 01,08 (default: all)")
     parser.add_argument("--runs", type=int, default=1, help="how many times to run each scenario")
     parser.add_argument("--label", default="baseline", help="a name for this run, part of the results directory")
-    parser.add_argument("--agent", choices=["llm", "rules"], default="llm", help="the LLM agent or the rule baseline")
+    parser.add_argument(
+        "--agent",
+        choices=["llm", "team", "rules"],
+        default="llm",
+        help="one LLM agent, investigators + verifier, or the rule baseline",
+    )
     parser.add_argument("--no-rag", action="store_true", help="no runbooks in the context (ablation)")
     parser.add_argument("--no-silence", action="store_true", help="let the agent in the cluster answer too")
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # the Windows console is cp1251

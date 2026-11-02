@@ -25,10 +25,7 @@ from ai_sre_agent.redact import Redactor
 
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """\
-You are an SRE on call. An alert fired on a Kubernetes stand and you investigate it with read-only tools.
-You cannot change anything; a human decides what to do with your answer.
-
+STAND = """\
 The stand: the voting app in namespace voting (vote-api and result-api behind Traefik, worker consuming Kafka,
 scaled by KEDA on consumer lag), Kafka by Strimzi (3 brokers, voting-dual-role-0..2), PostgreSQL by CloudNativePG
 (cluster voting-pg, services voting-pg-rw / voting-pg-ro), Redis. Argo CD deploys everything from the
@@ -36,7 +33,16 @@ voting-gitops repository (branch lab): Applications voting (the app), data (Kafk
 Monitoring (Prometheus, Loki) is in namespace monitoring.
 voting-gitops layout: charts/voting (the app; image.tag in charts/voting/values.yaml), charts/data (Kafka,
 PostgreSQL, Redis; their settings in charts/data/values.yaml), charts/alerts, envs/local.yaml (this stand's
-overrides), apps/ (the Argo CD Applications). A commit "voting: release <sha>" is a new image tag.
+overrides), apps/ (the Argo CD Applications). A commit "voting: release <sha>" is a new image tag."""
+
+SYSTEM_PROMPT = (
+    """\
+You are an SRE on call. An alert fired on a Kubernetes stand and you investigate it with read-only tools.
+You cannot change anything; a human decides what to do with your answer.
+
+"""
+    + STAND
+    + """
 
 How to investigate:
 1. Read the alert: what is affected, since when.
@@ -62,6 +68,7 @@ When done, answer with only this JSON object, no other text:
  "mitigation": "<what a human should do now>",
  "triage": "wake" | "morning" | "noise"}
 "alternatives" may be empty when the evidence leaves no other candidate."""
+)
 
 # Changes with every edit of the prompt, so backtest results can be grouped by prompt version.
 PROMPT_VERSION = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8]
@@ -134,13 +141,14 @@ class OpenAiLlm:
         )
 
     async def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], allow_tools: bool) -> Reply:
+        # Without tools (the verifier) the API takes neither tools nor tool_choice.
+        with_tools: dict[str, Any] = {"tools": tools, "tool_choice": "auto" if allow_tools else "none"} if tools else {}
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
-            tools=tools,  # type: ignore[arg-type]
-            tool_choice="auto" if allow_tools else "none",
             temperature=0,
             max_tokens=4000,
+            **with_tools,
         )
         message = response.choices[0].message
         usage = response.usage
@@ -234,56 +242,87 @@ def _parse_answer(text: str) -> dict[str, Any] | None:
     return answer if isinstance(answer, dict) else None
 
 
-async def investigate(
-    payload: dict[str, Any],
+def alert_name(payload: dict[str, Any]) -> str:
+    firing = [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
+    return (payload.get("commonLabels") or {}).get("alertname") or (
+        firing[0]["labels"].get("alertname", "unknown") if firing else "unknown"
+    )
+
+
+def alert_started_at(payload: dict[str, Any]) -> str:
+    return min((a.get("startsAt", "") for a in payload.get("alerts", []) if a.get("status") == "firing"), default="")
+
+
+def triage_of(value: Any) -> str:
+    """Unknown or missing: "wake", never silence an alert by accident."""
+    triage = str(value or "").lower()
+    return triage if triage in TRIAGE else "wake"
+
+
+@dataclass
+class Loop:
+    """What one tool-calling loop produced: the parsed answer and every call it made."""
+
+    answer: dict[str, Any] | None
+    calls: list[tuple[str, dict[str, Any], str]]  # (tool, arguments, redacted result), index = call - 1
+    steps: int = 0
+    tokens: int = 0
+    cost: float = 0.0
+    stopped_by: str = "max_steps"  # answer | max_steps | max_tokens | error
+    error: str = ""
+
+
+def cited(items: Any, calls: list[tuple[str, dict[str, Any], str]], offset: int = 0) -> list[Evidence]:
+    """The evidence items of an answer that point at a real tool result; `offset` renumbers the calls."""
+    evidence = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            number = int(item.get("call", 0))
+        except (TypeError, ValueError):
+            continue
+        if 1 <= number <= len(calls):
+            tool, arguments, result = calls[number - 1]
+            evidence.append(Evidence(number + offset, tool, arguments, str(item.get("finding", "")), result[:600]))
+    return evidence
+
+
+async def loop(
+    messages: list[dict[str, Any]],
+    specs: list[dict[str, Any]],
     settings: Settings,
     llm: Llm,
     tools: Tools,
     audit: Audit,
-    runbooks: list[rag.Runbook] | None = None,
-) -> Investigation:
-    started = time.monotonic()
-    redact = Redactor()
-    firing = [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
-    alertname = (payload.get("commonLabels") or {}).get("alertname") or (
-        firing[0]["labels"].get("alertname", "unknown") if firing else "unknown"
-    )
-    alert_text = redact(describe_alerts(payload))
-    audit.write("alert", alertname=alertname, text=alert_text, group_key=payload.get("groupKey"))
-
-    if runbooks:
-        audit.write("runbooks", retrieved=[{"source": r.source, "score": r.score} for r in runbooks])
-    first = [alert_text, rag.context(runbooks or []), "Investigate."]
-
-    specs = await tools.specs()
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "\n\n".join(part for part in first if part)},
-    ]
-    audit.write("start", model=llm.model, system_prompt=SYSTEM_PROMPT, tools=[s["function"]["name"] for s in specs])
-
-    calls: list[tuple[str, dict[str, Any], str]] = []  # (tool, arguments, redacted result), index = call - 1
-    tokens, cost, steps, stopped_by, answer, error = 0, 0.0, 0, "max_steps", None, ""
-
+    redact: Redactor,
+    max_steps: int,
+    max_tokens: int,
+    agent: str = "",
+) -> Loop:
+    """Tool calls until the model answers with JSON or the budget is used up. `agent` tags the audit records."""
+    tag = {"agent": agent} if agent else {}
+    out = Loop(None, [])
     try:
-        while steps < settings.max_steps and answer is None:
+        while out.steps < max_steps and out.answer is None:
             # The last turn, or out of tokens: no more tools, the model has to answer with what it has.
-            out_of_budget = tokens >= settings.max_tokens
-            forced = out_of_budget or steps == settings.max_steps - 1
+            out_of_budget = out.tokens >= max_tokens
+            forced = out_of_budget or out.steps == max_steps - 1
             if forced:
-                stopped_by = "max_tokens" if out_of_budget else "max_steps"
+                out.stopped_by = "max_tokens" if out_of_budget else "max_steps"
                 messages.append({"role": "user", "content": FINAL_NUDGE})
             with tracking.span(llm.model, "CHAT_MODEL", {"messages": messages, "allow_tools": not forced}) as span:
                 reply = await asyncio.wait_for(
                     llm.complete(messages, specs, allow_tools=not forced), settings.llm_timeout_s
                 )
                 tracking.outputs(span, asdict(reply))
-            steps += 1
-            tokens += reply.tokens
-            cost += reply.cost
+            out.steps += 1
+            out.tokens += reply.tokens
+            out.cost += reply.cost
             audit.write(
                 "llm",
-                step=steps,
+                **tag,
+                step=out.steps,
                 content=reply.content,
                 tool_calls=[{"name": c.name, "arguments": c.arguments} for c in reply.tool_calls],
                 tokens=reply.tokens,
@@ -291,13 +330,13 @@ async def investigate(
             )
 
             if not reply.tool_calls:
-                answer = _parse_answer(reply.content)
-                if answer is None:  # prose instead of JSON: ask once more for the format
+                out.answer = _parse_answer(reply.content)
+                if out.answer is None:  # prose instead of JSON: ask once more for the format
                     messages.append({"role": "assistant", "content": reply.content})
                     messages.append({"role": "user", "content": "Answer with only the JSON object, please."})
                     continue
                 if not forced:
-                    stopped_by = "answer"
+                    out.stopped_by = "answer"
                 break
 
             messages.append(
@@ -311,7 +350,7 @@ async def investigate(
                 }
             )
             for call in reply.tool_calls:
-                number = len(calls) + 1
+                number = len(out.calls) + 1
                 with tracking.span(call.name, "TOOL", {"call": number, "arguments": call.arguments}) as span:
                     try:
                         arguments = json.loads(call.arguments or "{}")
@@ -328,50 +367,68 @@ async def investigate(
                     if len(result) > settings.max_tool_result_chars:
                         result = result[: settings.max_tool_result_chars] + "\n... [truncated]"
                     tracking.outputs(span, {"error": is_error, "result": result})
-                calls.append((call.name, arguments, result))
-                audit.write("tool", call=number, name=call.name, arguments=arguments, error=is_error, result=result)
+                out.calls.append((call.name, arguments, result))
+                audit.write(
+                    "tool", **tag, call=number, name=call.name, arguments=arguments, error=is_error, result=result
+                )
                 prefix = f"[call {number}] {'ERROR ' if is_error else ''}"
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": prefix + result})
     except Exception as exc:  # the LLM endpoint failing must still produce a message and an audit record
-        stopped_by, error = "error", f"{type(exc).__name__}: {exc}"
-        audit.write("error", error=error)
+        out.stopped_by, out.error = "error", f"{type(exc).__name__}: {exc}"
+        audit.write("error", **tag, error=out.error)
+    return out
 
-    answer = answer or {}
-    triage = str(answer.get("triage") or "").lower()
-    if triage not in TRIAGE:  # unknown or missing: never silence an alert by accident
-        triage = "wake"
-    evidence = []
-    for item in answer.get("evidence") or []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            number = int(item.get("call", 0))
-        except (TypeError, ValueError):
-            continue
-        if 1 <= number <= len(calls):  # only evidence that points at a real tool result
-            tool, arguments, result = calls[number - 1]
-            evidence.append(Evidence(number, tool, arguments, str(item.get("finding", "")), result[:600]))
 
+def first_message(payload: dict[str, Any], redact: Redactor, runbooks: list[rag.Runbook] | None) -> str:
+    """The alert, the retrieved runbooks (as background, not evidence) and the task."""
+    first = [redact(describe_alerts(payload)), rag.context(runbooks or []), "Investigate."]
+    return "\n\n".join(part for part in first if part)
+
+
+async def investigate(
+    payload: dict[str, Any],
+    settings: Settings,
+    llm: Llm,
+    tools: Tools,
+    audit: Audit,
+    runbooks: list[rag.Runbook] | None = None,
+) -> Investigation:
+    started = time.monotonic()
+    redact = Redactor()
+    alertname = alert_name(payload)
+    audit.write("alert", alertname=alertname, text=redact(describe_alerts(payload)), group_key=payload.get("groupKey"))
+    if runbooks:
+        audit.write("runbooks", retrieved=[{"source": r.source, "score": r.score} for r in runbooks])
+
+    specs = await tools.specs()
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": first_message(payload, redact, runbooks)},
+    ]
+    audit.write("start", model=llm.model, system_prompt=SYSTEM_PROMPT, tools=[s["function"]["name"] for s in specs])
+    out = await loop(messages, specs, settings, llm, tools, audit, redact, settings.max_steps, settings.max_tokens)
+
+    answer = out.answer or {}
     investigation = Investigation(
         investigation_id=audit.investigation_id,
         alertname=alertname,
-        summary=str(answer.get("summary") or ("Investigation failed" if error else "No conclusion")),
+        summary=str(answer.get("summary") or ("Investigation failed" if out.error else "No conclusion")),
         root_cause=str(answer.get("root_cause") or ""),
         confidence=str(answer.get("confidence") or "low"),
         mitigation=str(answer.get("mitigation") or ""),
-        triage=triage,
+        triage=triage_of(answer.get("triage")),
         alternatives=[str(a) for a in (answer.get("alternatives") or []) if a][:2],
-        evidence=evidence,
-        stopped_by=stopped_by,
+        evidence=cited(answer.get("evidence"), out.calls),
+        stopped_by=out.stopped_by,
         model=llm.model,
-        steps=steps,
-        tool_calls=len(calls),
-        tokens=tokens,
-        cost_usd=round(cost, 6),
+        steps=out.steps,
+        tool_calls=len(out.calls),
+        tokens=out.tokens,
+        cost_usd=round(out.cost, 6),
         duration_s=round(time.monotonic() - started, 1),
         audit_path=str(audit.path),
-        error=error,
-        alert_started_at=min((a.get("startsAt", "") for a in firing), default=""),
+        error=out.error,
+        alert_started_at=alert_started_at(payload),
         finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     )
     audit.write("result", **asdict(investigation))

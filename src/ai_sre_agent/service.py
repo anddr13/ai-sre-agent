@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from ai_sre_agent import investigator, rag, tracking
+from ai_sre_agent import investigator, rag, team, tracking
 from ai_sre_agent.config import Settings
 from ai_sre_agent.investigator import Investigation
 from ai_sre_agent.slack import Slack
@@ -118,8 +118,9 @@ def main() -> None:
             logging.info("runbooks: %d sections embedded, %d deleted", embedded, deleted)
         except Exception as exc:  # the agent still works without RAG
             logging.warning("runbook sync failed: %s", exc)
+    investigate = team.run if settings.agent_mode == "team" else investigator.run
     uvicorn.run(
-        create_app(settings),
+        create_app(settings, investigate),
         host=os.environ.get("HOST", "127.0.0.1"),
         port=int(os.environ.get("PORT", "8080")),
         log_level="info",

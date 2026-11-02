@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 
-from ai_sre_agent import investigator
+from ai_sre_agent import investigator, team
 from ai_sre_agent.config import Settings
 from ai_sre_agent.slack import Slack
 
@@ -56,7 +56,7 @@ async def webhook_payload(alertname: str, settings: Settings) -> dict[str, Any]:
 async def main_async(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
     payload = await webhook_payload(args.alertname, settings)
-    inv = await investigator.run(payload, settings)
+    inv = await (team.run if settings.agent_mode == "team" else investigator.run)(payload, settings)
     print(json.dumps(asdict(inv), indent=2, ensure_ascii=False))
     if args.slack:
         await Slack(settings.slack_bot_token, settings.slack_channel).post_investigation(inv)

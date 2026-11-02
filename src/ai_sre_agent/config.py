@@ -43,6 +43,12 @@ class Settings:
     max_steps: int = 12  # LLM turns
     max_tokens: int = 80_000  # prompt + completion tokens over the whole investigation
     max_tool_result_chars: int = 6_000  # what one tool result may add to the conversation
+    # "single": one agent; "team": investigators per class of causes in parallel, then a verifier (team.py).
+    agent_mode: str = "single"
+    # Limits of one investigator of the team; the verifier is one more LLM call without tools.
+    investigator_max_steps: int = 7
+    investigator_max_tokens: int = 40_000
+    max_parallel_investigators: int = 3
     # Several alerts at once are investigated in parallel up to this number; the rest wait.
     max_concurrent: int = 2
     # The same firing alert group is not investigated again within this many seconds.
