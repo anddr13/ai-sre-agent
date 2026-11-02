@@ -16,7 +16,7 @@ log "pushed ${sha:0:7}: image.tag $old_tag -> $new_tag (does not exist)"
 save_state $S sha "$sha"
 
 # The answer is written down before the alert fires, i.e. before the agent can look.
-sed -e "s/{{revision}}/$sha/g" -e "s/{{revision7}}/${sha:0:7}/g" -e "s/{{bad_tag}}/$new_tag/g" -e "s/{{good_tag}}/$old_tag/g" \
+sed -e "s/{{revision}}/$sha/g" -e "s/{{revision7}}/${sha:0:7}/g" -e "s/{{bad_tag}}/$new_tag/g" -e "s/{{bad_tag7}}/${new_tag:0:7}/g" -e "s/{{good_tag}}/$old_tag/g" \
   "$(dirname "$0")/expected.yaml" > "$STATE_DIR/$S.expected.yaml"
 log "expected answer: $STATE_DIR/$S.expected.yaml"
 

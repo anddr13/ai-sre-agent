@@ -7,7 +7,8 @@ category: deploy
 triage: wake
 # Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
 match:
-  - '{{revision7}}'
+  # The release commit, or the tag it introduced: either one pins the change (the commit is "release <tag7>").
+  - '{{revision7}}|{{bad_tag7}}'
   - 'image|tag|pull'
 root_cause: >-
   Revision {{revision}} of voting-gitops (branch lab) changed image.tag of the voting chart from {{good_tag}}

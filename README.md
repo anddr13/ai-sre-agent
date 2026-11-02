@@ -82,12 +82,44 @@ uv run ai-sre-investigate VotingPodNotStarting --slack   # one investigation by 
 scripts/agent-secret.sh                                  # LLM key + Slack token into the cluster
 ```
 
+## Backtest
+
+`uv run ai-sre-backtest` breaks the stand with each scenario, lets the agent investigate the real alert and scores
+the answer against the cause that `break.sh` wrote down before the alert fired (regexes in `expected.yaml`: the
+revision, the broker, the setting). Top-1 / top-3 are the first / any of the three hypotheses, triage is
+wake / morning / noise. `--agent rules` runs the baseline without an LLM: one fixed playbook per alert over the
+same MCP tools. Results: `backtest/results/<time>-<label>/`.
+
+First run, 2026-11-01, the same stand, 8 scenarios once each:
+
+| | Top-1 | Triage | Wrong but "high" | Median alert → answer | Cost of the run |
+|---|---|---|---|---|---|
+| Single agent, `qwen/qwen3-14b` | 6/8 | 6/8 | 0/8 | 72 s | $0.011 |
+| Rules, no LLM | 6/8 | 7/8 | 0/8 | 19 s | $0 |
+
+The LLM misses 3 (it lists all three Kafka brokers instead of the stopped one) and 8 (it blames a harmless
+config change; the scenario is noise). The rules match it because four of the eight causes are "the latest
+commit", which is exactly what a rule checks. So the scenarios that separate them are the ones where the latest
+change is not the cause; that is what the next scenarios and the verifier are for.
+
+## MLflow
+
+MLflow runs in the cluster (`mlflow.localhost:8090`) on the agent's own PostgreSQL (`deploy/db.yaml`: CNPG,
+pgvector; separate from voting-pg, which the scenarios break). With `MLFLOW_TRACKING_URI` set:
+
+- a backtest is a run in the experiment `ai-sre-backtest`: agent, model, prompt version and commit as params,
+  per-scenario and total scores as metrics, `summary.md` and `results.jsonl` as artifacts;
+- an investigation is a trace: every LLM turn and every tool call as spans, with the redacted text the model saw;
+  the agent in the cluster traces the real alerts into the experiment `ai-sre-agent`.
+
 ## Status
 
 - [x] Stand: kind + Prometheus, Alertmanager, Grafana, Loki
 - [x] voting-app on PostgreSQL, exactly-once verified with k6 while the consumers are SIGKILLed
 - [x] 8 alerts + runbooks, each fired at least once
-- [x] Scenarios 1, 3, 4, 5, 7
+- [x] Scenarios 1-8
 - [x] Read-only MCP server (Prometheus, Loki, Kubernetes, Argo CD, git history) + RBAC check
 - [x] The agent: Alertmanager webhook → investigation → Slack, redaction, audit, limits
-- [ ] Week 2: investigators + verifier, RAG over the runbooks, the backtest runner, MLflow, vLLM
+- [x] Backtest runner + rule baseline, first table
+- [x] The agent's PostgreSQL (pgvector) + MLflow tracking and tracing
+- [ ] RAG over the runbooks, investigators + verifier, apply-fix + time to recovery, ablations, vLLM
