@@ -171,3 +171,16 @@ async def test_audit_tags_the_investigator(tmp_path: Path) -> None:
     )
     records = [json.loads(line) for line in audit_text(inv.audit_path).splitlines()]
     assert {r.get("agent") for r in records if r["event"] in ("llm", "tool")} == {*team.FOCUS, "verifier"}
+
+
+async def test_verifier_can_be_another_model(tmp_path: Path) -> None:
+    replies = scripted()
+    verifier = RoleLlm({"verifier": replies.pop("verifier")})
+    verifier.model = "strong"
+    llm = RoleLlm(replies)
+    inv = await team.investigate(
+        PAYLOAD, settings(tmp_path), llm, FakeTools(), Audit(str(tmp_path), "x"), verifier=verifier
+    )
+    assert "verifier" not in llm.requests and len(verifier.requests["verifier"]) == 1
+    assert inv.root_cause == "image tag"
+    assert inv.model == "scripted + verifier strong"

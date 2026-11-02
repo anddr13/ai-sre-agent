@@ -134,8 +134,8 @@ class McpTools:
 
 
 class OpenAiLlm:
-    def __init__(self, settings: Settings):
-        self.model = settings.llm_model
+    def __init__(self, settings: Settings, model: str = ""):
+        self.model = model or settings.llm_model
         self._client = AsyncOpenAI(
             base_url=settings.llm_base_url, api_key=settings.llm_api_key, timeout=settings.llm_timeout_s, max_retries=2
         )

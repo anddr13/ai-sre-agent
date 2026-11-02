@@ -284,6 +284,7 @@ def _params(args: argparse.Namespace, scenarios: list[str], settings: Settings) 
     return {
         "agent": args.agent,
         "model": settings.llm_model if llm else rules.MODEL,
+        "verifier_model": (settings.verifier_model or settings.llm_model) if args.agent == "team" else "",
         "prompt_version": prompts[args.agent],
         "scenarios": ",".join(scenarios),
         "runs": args.runs,

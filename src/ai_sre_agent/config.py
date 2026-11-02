@@ -49,6 +49,9 @@ class Settings:
     investigator_max_steps: int = 7
     investigator_max_tokens: int = 40_000
     max_parallel_investigators: int = 3
+    # The verifier's model, on the same endpoint; empty: llm_model. One call per investigation, so a stronger model
+    # costs little.
+    verifier_model: str = ""
     # Several alerts at once are investigated in parallel up to this number; the rest wait.
     max_concurrent: int = 2
     # The same firing alert group is not investigated again within this many seconds.

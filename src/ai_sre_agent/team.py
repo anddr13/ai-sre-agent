@@ -86,8 +86,10 @@ You verify an incident investigation. Investigators proposed hypotheses for an a
 the tool, its arguments and the result (redacted, possibly cut). You have no tools. Judge every hypothesis only by
 the results it cites:
 - supported: the results show the claimed fact, and it explains the alert (the right object, the right time);
-- rejected: the results do not show it or contradict it, it only restates the alert or a symptom, or it is
-  generic ("misconfiguration", "dependency issues", "resource constraints") without the specific object.
+- rejected: the results do not show it or contradict it; it only restates the alert or a symptom ("the cluster
+  has no primary", "the replica is lagging", "pods are not ready") instead of saying why; or it is generic
+  ("misconfiguration", "dependency issues", "resource constraints") without the specific object.
+Give a verdict for every hypothesis.
 Then rank the supported hypotheses, the most likely root cause first; a cause comes before its own symptoms.
 Hypotheses that name the same cause are one: rank only the best supported of them, so the ranking holds
 different candidates.
@@ -208,7 +210,10 @@ async def investigate(
     tools: Tools,
     audit: Audit,
     runbooks: list[Runbook] | None = None,
+    verifier: Llm | None = None,
 ) -> Investigation:
+    """`verifier` defaults to `llm`."""
+    verifier = verifier or llm
     started = time.monotonic()
     redact = Redactor()
     alertname = alert_name(payload)
@@ -217,7 +222,14 @@ async def investigate(
     if runbooks:
         audit.write("runbooks", retrieved=[{"source": r.source, "score": r.score} for r in runbooks])
     specs = await tools.specs()
-    audit.write("start", model=llm.model, mode="team", investigators=list(FOCUS), prompt_version=PROMPT_VERSION)
+    audit.write(
+        "start",
+        model=llm.model,
+        verifier_model=verifier.model,
+        mode="team",
+        investigators=list(FOCUS),
+        prompt_version=PROMPT_VERSION,
+    )
 
     limit = asyncio.Semaphore(settings.max_parallel_investigators)
     reports = list(
@@ -253,7 +265,7 @@ async def investigate(
             for _ in range(2):  # prose instead of JSON gets one more chance
                 with tracking.span("verifier", "CHAT_MODEL", {"messages": messages}) as span:
                     reply = await asyncio.wait_for(
-                        llm.complete(messages, [], allow_tools=False), settings.llm_timeout_s
+                        verifier.complete(messages, [], allow_tools=False), settings.llm_timeout_s
                     )
                     tracking.outputs(span, asdict(reply))
                 steps, tokens, cost = steps + 1, tokens + reply.tokens, cost + reply.cost
@@ -293,7 +305,7 @@ async def investigate(
         alternatives=[h.cause for h in ranked[1:3]],
         evidence=top.evidence if top else [],
         stopped_by="error" if error and not top else "answer",
-        model=llm.model,
+        model=llm.model if verifier.model == llm.model else f"{llm.model} + verifier {verifier.model}",
         steps=steps,
         tool_calls=offset,
         tokens=tokens,
@@ -316,6 +328,7 @@ async def run(payload: dict[str, Any], settings: Settings) -> Investigation:
     with tracking.span("investigate", "AGENT", {"alertname": alertname, "mode": "team"}) as span:
         runbooks = await retrieve(payload, settings, audit)
         async with Client(build_server(settings)) as client:
-            result = await investigate(payload, settings, OpenAiLlm(settings), McpTools(client), audit, runbooks)
+            llm, verifier = OpenAiLlm(settings), OpenAiLlm(settings, settings.verifier_model)
+            result = await investigate(payload, settings, llm, McpTools(client), audit, runbooks, verifier)
         tracking.outputs(span, {"root_cause": result.root_cause, "triage": result.triage, "error": result.error})
     return result
