@@ -89,6 +89,8 @@ the results it cites:
 - rejected: the results do not show it or contradict it, it only restates the alert or a symptom, or it is
   generic ("misconfiguration", "dependency issues", "resource constraints") without the specific object.
 Then rank the supported hypotheses, the most likely root cause first; a cause comes before its own symptoms.
+Hypotheses that name the same cause are one: rank only the best supported of them, so the ranking holds
+different candidates.
 Triage the alert: "wake" if users are affected or will be soon and someone must act now; "morning" if it needs a
 fix but can wait for working hours; "noise" if it needs no action (a short spike that resolved by itself, no
 errors, no user impact).
