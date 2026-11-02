@@ -1,0 +1,14 @@
+
+$ scenarios\01-bad-deploy\break.sh
+[10:32:54] pushed f3a5bb6: image.tag 74f671ba05f3e8001e778e47ed8201e95d4323e9 -> 8a237cf5d5aac71dd56e4e131eb8f7ae89d6002f (does not exist)
+[10:32:54] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/01-bad-deploy.expected.yaml
+[10:32:55] waiting for VotingPodNotStarting to be firing (up to 420s)
+[10:36:02] VotingPodNotStarting is firing after 187s
+
+$ scenarios\01-bad-deploy\restore.sh
+[10:37:00] pushed revert f60fb0d of f3a5bb6
+[10:37:00] terminating the running operation of voting (it is on another revision)
+[10:37:06] voting is Synced and Healthy at f60fb0d (last operation: Failed)
+[10:37:07] all Deployments in voting rolled out
+[10:37:07] waiting for VotingPodNotStarting to be resolved (up to 300s)
+[10:37:29] VotingPodNotStarting is not firing after 22s

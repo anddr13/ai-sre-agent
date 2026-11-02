@@ -90,17 +90,22 @@ revision, the broker, the setting). Top-1 / top-3 are the first / any of the thr
 wake / morning / noise. `--agent rules` runs the baseline without an LLM: one fixed playbook per alert over the
 same MCP tools. Results: `backtest/results/<time>-<label>/`.
 
-First run, 2026-11-01, the same stand, 8 scenarios once each:
+Runs of 2026-11-02, the same stand, 8 scenarios once each (`--no-rag` is the ablation):
 
-| | Top-1 | Triage | Wrong but "high" | Median alert → answer | Cost of the run |
+| | Top-1 | Triage | Wrong but "high" | Median alert → answer | Median cost / investigation |
 |---|---|---|---|---|---|
-| Single agent, `qwen/qwen3-14b` | 6/8 | 6/8 | 0/8 | 72 s | $0.011 |
-| Rules, no LLM | 6/8 | 7/8 | 0/8 | 19 s | $0 |
+| Single agent, `qwen/qwen3-14b`, no RAG | 3/8 | 7/8 | 2/8 | 95 s | $0.0014 |
+| Single agent, `qwen/qwen3-14b`, RAG top-3 runbooks | 5/8 | 7/8 | 1/8 | 117 s | $0.0022 |
 
-The LLM misses 3 (it lists all three Kafka brokers instead of the stopped one) and 8 (it blames a harmless
-config change; the scenario is noise). The rules match it because four of the eight causes are "the latest
-commit", which is exactly what a rule checks. So the scenarios that separate them are the ones where the latest
-change is not the cause; that is what the next scenarios and the verifier are for.
+RAG fixes 3 (the stopped Kafka broker) and 4 (the failover) and costs ~1.6× the tokens. Both still miss 2 (they
+blame a reverted image tag or Redis, not the config change), 6 (they never look at WAL replay) and 8 (they blame
+a harmless deploy; the scenario is noise). One run each: the difference is two scenarios, so it needs repeated
+runs before it means anything.
+
+The first tables (2026-11-01: LLM 6/8, rules 6/8) are not comparable: the runner then waited only for the alerts
+to clear, so the previous scenario's errors were still in the logs the agent read, and scenario 6 was scored on
+restating the alert. The runner now also waits for quiet logs, and scenario 6 needs the mechanism. The rules
+baseline has not been rerun since.
 
 ## MLflow
 
