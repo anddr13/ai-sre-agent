@@ -1,0 +1,12 @@
+
+$ scenarios\05-postgres-connections\break.sh
+[22:14:22] pushed 9c8defa: max_connections 100 -> 8
+[22:14:22] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/05-postgres-connections.expected.yaml
+[22:14:24] k6: 150 votes/s for 20m (container k6-05-postgres-connections)
+[22:14:36] data is Synced and Healthy at 9c8defa (last operation: Succeeded)
+[22:14:36] waiting for PostgresConnectionsHigh to be firing (up to 600s)
+[22:20:13] PostgresConnectionsHigh is firing after 337s
+
+$ scenarios\05-postgres-connections\restore.sh
+[22:22:52] pushed revert 2d33096 of 9c8defa
+[22:27:53] TIMEOUT: data did not reach 2d33096

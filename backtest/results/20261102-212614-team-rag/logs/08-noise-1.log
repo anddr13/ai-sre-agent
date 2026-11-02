@@ -1,0 +1,17 @@
+
+$ scenarios\08-noise\break.sh
+[23:18:30] pushed 2fbfae5: cloudName kind -> kind-lab
+[23:18:30] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/08-noise.expected.yaml
+[23:18:37] voting is Synced and Healthy at 2fbfae5 (last operation: Succeeded)
+[23:18:39] all Deployments in voting rolled out
+[23:18:41] k6: 2500 votes/s for 60s (container k6-08-noise)
+[23:18:41] waiting for VotingApiLatencyHigh to be firing (up to 240s)
+[23:19:35] VotingApiLatencyHigh is firing after 54s
+
+$ scenarios\08-noise\restore.sh
+[23:22:55] k6 stopped
+[23:23:00] pushed revert fd1dd27 of 2fbfae5
+[23:23:14] voting is Synced and Healthy at fd1dd27 (last operation: Succeeded)
+[23:23:17] all Deployments in voting rolled out
+[23:23:17] waiting for VotingApiLatencyHigh to be resolved (up to 300s)
+[23:23:17] VotingApiLatencyHigh is not firing after 0s
