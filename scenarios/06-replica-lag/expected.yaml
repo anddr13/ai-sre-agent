@@ -8,7 +8,8 @@ triage: wake|morning
 # Scoring: a hypothesis is correct when every pattern matches it (case-insensitive regex).
 match:
   - '{{replica}}|replica|standby'
-  - 'replay|lag|behind|stale|apply'
+  # The mechanism, not the symptom: "lag" or "behind" alone only repeats the alert.
+  - 'replay|appl(y|ied)|paused|stalled'
 root_cause: >-
   The replica {{replica}} of voting-pg receives WAL from the primary {{primary}} but does not apply it (replay
   stalled), while the primary takes a steady stream of writes. Its replication lag grows without bound, and

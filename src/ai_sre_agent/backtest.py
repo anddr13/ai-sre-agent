@@ -100,13 +100,18 @@ def run_script(path: Path, log: Path) -> None:
         raise RuntimeError(f"{path.parent.name}/{path.name} failed with exit code {completed.returncode} (see {log})")
 
 
+# Error lines of the voting services; a quiet stand writes 0-3 a minute, a broken one hundreds.
+ERROR_LINES = 'sum(count_over_time({namespace="voting"} |~ "(?i)error|refused|reset|timeout|fatal" [%s]))'
+
+
 class Stand:
-    """Prometheus and Alertmanager of the stand, through Grafana's datasource proxy."""
+    """Prometheus, Loki and Alertmanager of the stand, through Grafana's datasource proxy."""
 
     def __init__(self, settings: Settings):
         headers = {"Host": settings.http_host_header} if settings.http_host_header else {}
         self._http = httpx.AsyncClient(timeout=15, headers=headers)
         self._prometheus = settings.prometheus_url
+        self._loki = settings.loki_url
 
     async def firing(self) -> list[str]:
         response = await self._http.get(
@@ -114,16 +119,26 @@ class Stand:
         )
         return sorted({r["metric"]["alertname"] for r in response.json()["data"]["result"]})
 
-    async def settle(self, quiet_s: int = 60, timeout_s: int = 900) -> list[str]:
-        """Waits until no voting alert has fired for quiet_s seconds; returns whatever still fires at the timeout."""
+    async def error_lines(self, window: str) -> int:
+        response = await self._http.get(f"{self._loki}/loki/api/v1/query", params={"query": ERROR_LINES % window})
+        result = response.json()["data"]["result"]
+        return int(float(result[0]["value"][1])) if result else 0
+
+    async def settle(
+        self, quiet_s: int = 60, logs_window: str = "5m", max_error_lines: int = 20, timeout_s: int = 1200
+    ) -> list[str]:
+        """Waits until no voting alert has fired for quiet_s seconds and the logs of the last logs_window are quiet,
+        so the next scenario does not inherit the errors of the previous one (the agent reads those logs too).
+        Returns what is still wrong at the timeout."""
         deadline, quiet_since = time.monotonic() + timeout_s, time.monotonic()
         while time.monotonic() < deadline:
             if await self.firing():
                 quiet_since = time.monotonic()
-            elif time.monotonic() - quiet_since >= quiet_s:
+            elif time.monotonic() - quiet_since >= quiet_s and await self.error_lines(logs_window) <= max_error_lines:
                 return []
             await asyncio.sleep(10)
-        return await self.firing()
+        errors = await self.error_lines(logs_window)
+        return [*await self.firing(), *([f"{errors} error lines in {logs_window}"] if errors > max_error_lines else [])]
 
     async def silence(self, hours: float) -> str:
         now = datetime.now(UTC)
