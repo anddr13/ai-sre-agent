@@ -5,7 +5,9 @@ description = "Read-only agent that investigates Kubernetes incidents"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "asyncpg>=0.32.0",
     "fastapi>=0.162.0",
+    "fastembed>=0.9.1",
     "httpx>=0.28.1",
     "kubernetes-asyncio>=36.1.0",
     "mcp>=2.3.0",
@@ -21,6 +23,7 @@ ai-sre-mcp = "ai_sre_agent.mcp_server.server:main"
 ai-sre-agent = "ai_sre_agent.service:main"
 ai-sre-investigate = "ai_sre_agent.cli:main"
 ai-sre-backtest = "ai_sre_agent.backtest:main"
+ai-sre-rag = "ai_sre_agent.rag:main"
 
 [dependency-groups]
 dev = [

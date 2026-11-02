@@ -8,6 +8,7 @@ every step is written to the audit log, and the loop is bounded by steps, tokens
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -16,11 +17,13 @@ from typing import Any, Protocol
 from mcp import Client
 from openai import AsyncOpenAI
 
-from ai_sre_agent import tracking
+from ai_sre_agent import rag, tracking
 from ai_sre_agent.audit import Audit
 from ai_sre_agent.config import Settings
 from ai_sre_agent.mcp_server.server import build_server
 from ai_sre_agent.redact import Redactor
+
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You are an SRE on call. An alert fired on a Kubernetes stand and you investigate it with read-only tools.
@@ -232,7 +235,12 @@ def _parse_answer(text: str) -> dict[str, Any] | None:
 
 
 async def investigate(
-    payload: dict[str, Any], settings: Settings, llm: Llm, tools: Tools, audit: Audit
+    payload: dict[str, Any],
+    settings: Settings,
+    llm: Llm,
+    tools: Tools,
+    audit: Audit,
+    runbooks: list[rag.Runbook] | None = None,
 ) -> Investigation:
     started = time.monotonic()
     redact = Redactor()
@@ -243,10 +251,14 @@ async def investigate(
     alert_text = redact(describe_alerts(payload))
     audit.write("alert", alertname=alertname, text=alert_text, group_key=payload.get("groupKey"))
 
+    if runbooks:
+        audit.write("runbooks", retrieved=[{"source": r.source, "score": r.score} for r in runbooks])
+    first = [alert_text, rag.context(runbooks or []), "Investigate."]
+
     specs = await tools.specs()
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"{alert_text}\n\nInvestigate."},
+        {"role": "user", "content": "\n\n".join(part for part in first if part)},
     ]
     audit.write("start", model=llm.model, system_prompt=SYSTEM_PROMPT, tools=[s["function"]["name"] for s in specs])
 
@@ -366,13 +378,31 @@ async def investigate(
     return investigation
 
 
+async def retrieve(payload: dict[str, Any], settings: Settings, audit: Audit) -> list[rag.Runbook]:
+    """The runbooks closest to the alert; none when RAG is off or its database is down (the agent still works)."""
+    if not settings.rag_database_url:
+        return []
+    query = Redactor()(describe_alerts(payload))
+    with tracking.span("retrieve", "RETRIEVER", {"query": query}) as span:
+        try:
+            embedder = rag.embedder(settings.embedding_cache_dir)
+            runbooks = await rag.search(settings.rag_database_url, embedder, query, settings.rag_top_k)
+        except Exception as exc:
+            log.warning("runbook retrieval failed: %s", exc)
+            audit.write("runbooks", error=f"{type(exc).__name__}: {exc}")
+            return []
+        tracking.outputs(span, [{"source": r.source, "score": r.score} for r in runbooks])
+    return runbooks
+
+
 async def run(payload: dict[str, Any], settings: Settings) -> Investigation:
     """An investigation with the real LLM and the real MCP server."""
     firing = [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
     alertname = firing[0]["labels"].get("alertname", "alert") if firing else "alert"
     audit = Audit(settings.audit_dir, alertname)
     with tracking.span("investigate", "AGENT", {"alertname": alertname}) as span:
+        runbooks = await retrieve(payload, settings, audit)
         async with Client(build_server(settings)) as client:
-            result = await investigate(payload, settings, OpenAiLlm(settings), McpTools(client), audit)
+            result = await investigate(payload, settings, OpenAiLlm(settings), McpTools(client), audit, runbooks)
         tracking.outputs(span, {"root_cause": result.root_cause, "triage": result.triage, "error": result.error})
     return result

@@ -57,6 +57,11 @@ class Settings:
     mlflow_tracking_uri: str = ""
     mlflow_experiment: str = "ai-sre-agent"
 
+    # RAG over the runbooks (pgvector in ai-sre-db); empty means off.
+    rag_database_url: str = ""
+    rag_top_k: int = 3
+    embedding_cache_dir: str = str(REPO_ROOT / ".cache" / "fastembed")
+
     @classmethod
     def from_env(cls, env_file: Path | None = REPO_ROOT / ".env") -> "Settings":
         """Every field can be set as an upper-case environment variable of the same name."""

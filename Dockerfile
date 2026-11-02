@@ -9,6 +9,11 @@ COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+# The embedding model of the runbook RAG is part of the image: no download when the pod starts.
+RUN .venv/bin/python -c "from ai_sre_agent import rag; rag.embedder(rag.Settings().embedding_cache_dir)._load()" \
+    && chmod -R a+rX .cache
+# The RAG corpus: the agent syncs it into pgvector when it starts.
+COPY runbooks ./runbooks
 
 FROM python:3.12-slim
 # git for the gitops_log tool (a clone of voting-gitops, refreshed with git fetch).
@@ -17,6 +22,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 COPY --from=build /app /app
 COPY docker-entrypoint.sh /usr/local/bin/
 ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 HOME=/work HOST=0.0.0.0 PORT=8080
+# The embedding model is in the image; never look for a newer one at runtime.
+ENV HF_HUB_OFFLINE=1
 # Numeric UID so Kubernetes can verify runAsNonRoot.
 USER 1000:1000
 EXPOSE 8080

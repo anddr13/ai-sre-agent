@@ -82,6 +82,12 @@ spec:
             # Every real investigation becomes a trace in the experiment ai-sre-agent.
             - name: MLFLOW_TRACKING_URI
               value: http://mlflow.ai-sre-agent.svc
+            # RAG: the runbooks in pgvector of the agent's own Postgres (deploy/db.yaml); CloudNativePG's Secret.
+            - name: RAG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ai-sre-db-app
+                  key: uri
           readinessProbe:
             httpGet:
               path: /healthz
@@ -94,8 +100,9 @@ spec:
             initialDelaySeconds: 20
             periodSeconds: 30
           resources:
-            requests: { cpu: 50m, memory: 192Mi }
-            limits: { memory: 512Mi }
+            # ~390 MB peak with the embedding model (bge-small, ONNX, one thread).
+            requests: { cpu: 50m, memory: 320Mi }
+            limits: { memory: 768Mi }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

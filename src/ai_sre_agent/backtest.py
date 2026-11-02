@@ -13,6 +13,7 @@ Results: backtest/results/<time>-<label>/results.jsonl and summary.md.
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import os
 import re
@@ -29,7 +30,7 @@ from typing import Any
 import httpx
 import yaml
 
-from ai_sre_agent import investigator, rules, tracking
+from ai_sre_agent import investigator, rag, rules, tracking
 from ai_sre_agent.cli import ALERTMANAGER_URL, webhook_payload
 from ai_sre_agent.config import REPO_ROOT, Settings
 from ai_sre_agent.investigator import Investigation
@@ -269,6 +270,8 @@ def _params(args: argparse.Namespace, scenarios: list[str], settings: Settings) 
         "prompt_version": investigator.PROMPT_VERSION if llm else rules.PROMPT_VERSION,
         "scenarios": ",".join(scenarios),
         "runs": args.runs,
+        "rag": llm and bool(settings.rag_database_url),
+        "rag_top_k": settings.rag_top_k,
         "commit": commit.stdout.strip(),
     }
 
@@ -287,6 +290,13 @@ def _scenario_metrics(r: Result) -> dict[str, float]:
 
 async def main_async(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
+    if args.no_rag:
+        settings = dataclasses.replace(settings, rag_database_url="")
+    elif settings.rag_database_url and args.agent == "llm":
+        # The corpus is the runbooks of this checkout, so a run is reproducible from its commit.
+        model = rag.embedder(settings.embedding_cache_dir)
+        embedded, deleted = await rag.sync(settings.rag_database_url, model, rag.corpus())
+        print(f"runbooks: {embedded} sections embedded, {deleted} deleted", flush=True)
     scenarios = [s for s in ALL if any(s.startswith(p) for p in args.scenarios.split(","))] if args.scenarios else ALL
     out = RESULTS_DIR / f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{args.label}"
     out.mkdir(parents=True, exist_ok=True)
@@ -333,6 +343,7 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=1, help="how many times to run each scenario")
     parser.add_argument("--label", default="baseline", help="a name for this run, part of the results directory")
     parser.add_argument("--agent", choices=["llm", "rules"], default="llm", help="the LLM agent or the rule baseline")
+    parser.add_argument("--no-rag", action="store_true", help="no runbooks in the context (ablation)")
     parser.add_argument("--no-silence", action="store_true", help="let the agent in the cluster answer too")
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # the Windows console is cp1251
     asyncio.run(main_async(parser.parse_args()))

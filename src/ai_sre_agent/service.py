@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from ai_sre_agent import investigator, tracking
+from ai_sre_agent import investigator, rag, tracking
 from ai_sre_agent.config import Settings
 from ai_sre_agent.investigator import Investigation
 from ai_sre_agent.slack import Slack
@@ -110,6 +110,14 @@ def main() -> None:
     if not settings.llm_api_key:
         raise SystemExit("LLM_API_KEY is not set")
     tracking.setup(settings.mlflow_tracking_uri, settings.mlflow_experiment)
+    if settings.rag_database_url:
+        # The runbooks in the image are the corpus; only changed sections are embedded again.
+        try:
+            model = rag.embedder(settings.embedding_cache_dir)
+            embedded, deleted = asyncio.run(rag.sync(settings.rag_database_url, model, rag.corpus()))
+            logging.info("runbooks: %d sections embedded, %d deleted", embedded, deleted)
+        except Exception as exc:  # the agent still works without RAG
+            logging.warning("runbook sync failed: %s", exc)
     uvicorn.run(
         create_app(settings),
         host=os.environ.get("HOST", "127.0.0.1"),
