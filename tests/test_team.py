@@ -184,3 +184,31 @@ async def test_verifier_can_be_another_model(tmp_path: Path) -> None:
     assert "verifier" not in llm.requests and len(verifier.requests["verifier"]) == 1
     assert inv.root_cause == "image tag"
     assert inv.model == "scripted + verifier strong"
+
+
+async def test_empty_or_failed_results_are_no_evidence(tmp_path: Path) -> None:
+    replies = {
+        "changes": [tool_reply("{}"), answer_reply({"hypotheses": [hypothesis("postgres down", 1)]})],
+        "resources": [tool_reply("{}"), answer_reply({"hypotheses": [hypothesis("broken tool", 1)]})],
+        "dependencies": [answer_reply(EMPTY)],
+        "verifier": [],
+    }
+    empty = '{"query": "cnpg_cluster_status", "result_type": "matrix", "series_total": 0, "series": []}'
+
+    class Results(FakeTools):
+        async def call(self, name: str, arguments: dict[str, Any]) -> tuple[bool, str]:
+            self.calls.append((name, arguments))
+            return (False, empty) if len(self.calls) == 1 else (True, "Error executing tool k8s_events: not found")
+
+    llm = RoleLlm(replies, delay=0.01)
+    inv = await team.investigate(PAYLOAD, settings(tmp_path), llm, Results(), Audit(str(tmp_path), "x"))
+    assert "verifier" not in llm.requests and inv.root_cause == ""
+
+
+def test_shows_something() -> None:
+    assert team.shows_something('{"series_total": 2, "series": [...]}')
+    assert not team.shows_something('{"series_total": 0, "series": []}')
+    assert not team.shows_something('{"namespace": "voting", "events_total": 0, "newest_first": []}')
+    assert not team.shows_something('{"lines_returned": 0, "newest_first": []}')
+    assert not team.shows_something('{"branch": "lab", "commits_newest_first": []}')
+    assert not team.shows_something("Error executing tool loki_query: HTTP 400")

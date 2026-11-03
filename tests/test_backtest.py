@@ -50,9 +50,10 @@ def test_all_patterns_must_match_one_hypothesis() -> None:
     assert score(inv("ebac3bd changed something", ["an image pull problem"]), BAD_DEPLOY) == (None, True)
 
 
-def test_summary_counts_for_the_first_hypothesis() -> None:
+def test_summary_does_not_count() -> None:
+    # A summary can hedge over several causes ("... may also contribute"); only the ranked hypotheses are scored.
     answer = inv("image tag missing from the registry", summary="caused by release ebac3bd")
-    assert score(answer, BAD_DEPLOY)[0] == 1
+    assert score(answer, BAD_DEPLOY)[0] is None
 
 
 def test_noise_scenario_scores_the_label_only() -> None:

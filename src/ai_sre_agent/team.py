@@ -10,6 +10,7 @@ outcome is an ordinary Investigation, so Slack, the audit log and the backtest d
 import asyncio
 import hashlib
 import json
+import re
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -70,6 +71,7 @@ You have read-only tools and cannot change anything.
     + """
 
 Find names with k8s_describe and k8s_events instead of guessing them. Every tool result is labelled [call N].
+A query that returns nothing is not evidence that something is down.
 Be economical: 3-6 tool calls. If nothing in your class explains the alert, say so with an empty list: a
 verifier reads your evidence, and a hypothesis it does not support only costs time.
 
@@ -89,6 +91,7 @@ the results it cites:
 - rejected: the results do not show it or contradict it; it only restates the alert or a symptom ("the cluster
   has no primary", "the replica is lagging", "pods are not ready") instead of saying why; or it is generic
   ("misconfiguration", "dependency issues", "resource constraints") without the specific object.
+A result that is empty or an error shows nothing: a missing metric is not a broken service.
 Give a verdict for every hypothesis.
 Then rank the supported hypotheses, the most likely root cause first; a cause comes before its own symptoms.
 Hypotheses that name the same cause are one: rank only the best supported of them, so the ranking holds
@@ -110,6 +113,15 @@ PROMPT_VERSION = hashlib.sha256((INVESTIGATOR_PROMPT + "".join(FOCUS.values()) +
     :8
 ]
 EVIDENCE_CHARS = 1_500  # of each cited result, for the verifier
+
+# Results that show nothing (see the tools in mcp_server): no series, no events, no log lines, no commits.
+EMPTY = re.compile(r'"(series_total|events_total|lines_returned)": 0\b|"commits_newest_first": \[\]')
+FAILED = ("Error executing tool", "invalid arguments:", "the tool did not answer in time")
+
+
+def shows_something(result: str) -> bool:
+    """Evidence must be a result: a failed call or an empty answer cannot support a claim."""
+    return not result.startswith(FAILED) and not EMPTY.search(result)
 
 
 @dataclass
@@ -164,14 +176,19 @@ async def _investigator(
 
 
 def hypotheses(reports: list[Report]) -> tuple[list[Hypothesis], list[str]]:
-    """Every hypothesis of the investigators with its evidence; the ones that cite no real call are dropped."""
+    """Every hypothesis of the investigators with its evidence; the ones that cite no real, non-empty result are
+    dropped."""
     kept, dropped = [], []
     for report in reports:
         for item in ((report.loop.answer or {}).get("hypotheses") or [])[:2]:
             if not isinstance(item, dict) or not item.get("cause"):
                 continue
             cause = str(item["cause"])
-            evidence = cited(item.get("evidence"), report.loop.calls, report.offset)
+            evidence = [
+                e
+                for e in cited(item.get("evidence"), report.loop.calls, report.offset)
+                if shows_something(report.loop.calls[e.call - report.offset - 1][2])
+            ]
             if not evidence:
                 dropped.append(f"{report.investigator}: {cause}")
                 continue

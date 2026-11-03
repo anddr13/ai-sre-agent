@@ -78,8 +78,8 @@ def score(inv: Investigation, expected: dict[str, Any]) -> tuple[int | None, boo
         return (1 if inv.triage == "noise" else None), triage_ok
     patterns = [p for p in expected.get("match") or [] if p]
     for rank, hypothesis in enumerate(inv.hypotheses, start=1):
-        text = f"{hypothesis} {inv.summary}" if rank == 1 else hypothesis
-        if patterns and all(re.search(p, text, re.IGNORECASE) for p in patterns):
+        # Not the summary: it can hedge over several causes ("... may also contribute").
+        if patterns and all(re.search(p, hypothesis, re.IGNORECASE) for p in patterns):
             return rank, triage_ok
     return None, triage_ok
 
