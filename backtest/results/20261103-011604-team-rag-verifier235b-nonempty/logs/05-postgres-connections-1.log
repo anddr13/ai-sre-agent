@@ -1,0 +1,16 @@
+
+$ scenarios\05-postgres-connections\break.sh
+[07:28:50] pushed d917a06: max_connections 100 -> 8
+[07:28:50] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/05-postgres-connections.expected.yaml
+[07:28:53] k6: 150 votes/s for 20m (container k6-05-postgres-connections)
+[07:29:23] data is Synced and Healthy at d917a06 (last operation: Succeeded)
+[07:29:23] waiting for PostgresConnectionsHigh to be firing (up to 600s)
+[07:33:58] PostgresConnectionsHigh is firing after 274s
+
+$ scenarios\05-postgres-connections\restore.sh
+[07:36:24] k6 stopped
+[07:36:28] pushed revert 41f1e8d of d917a06
+[07:38:09] data is Synced and Healthy at 41f1e8d (last operation: Succeeded)
+[07:38:09] PostgreSQL cluster ready, primary voting-pg-1
+[07:38:09] waiting for PostgresConnectionsHigh to be resolved (up to 420s)
+[07:38:10] PostgresConnectionsHigh is not firing after 1s

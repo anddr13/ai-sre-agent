@@ -107,6 +107,29 @@ to clear, so the previous scenario's errors were still in the logs the agent rea
 restating the alert. The runner now also waits for quiet logs, and scenario 6 needs the mechanism. The rules
 baseline has not been rerun since.
 
+### Investigators + verifier (`--agent team`)
+
+Three investigators in parallel, one per class of causes (changes and config; resources and limits; Kafka,
+PostgreSQL, Redis and the network), each with its own budget. Every hypothesis cites its tool calls; one that cites
+no call, or only failed or empty results, is dropped in code. A verifier without tools reads the cited results
+and rejects what they do not show, then ranks the rest (`team.py`). Runs of 2026-11-02/03, RAG on, scored on the
+hypotheses only:
+
+| | Top-1 | Top-3 | Wrong but "high" | Median cost / investigation |
+|---|---|---|---|---|
+| Single agent (above) | 5/8 | 5/8 | 1/8 | $0.0022 |
+| Team, verifier `qwen/qwen3-14b` | 5/8 | 6/8 | 2/8 | $0.0057 |
+| Team, verifier `qwen/qwen3-235b-a22b-2507` | 4/8 | 6/8 | 3/8 | $0.0053 |
+
+On these eight scenarios the team is not more accurate than one agent and costs ~2.5× as much. What it does do:
+the evidence check removes the hypotheses built on nothing (both verifiers first accepted "no series for
+cnpg_cluster_status" as proof that PostgreSQL was down; empty results no longer count), and the right cause is
+in the top 3 more often. What it does not do: a verifier that sees only the cited results still ranks a symptom
+("ImagePullBackOff in pod migrate") above its cause and still calls scenario 8 a real incident. Scenario 3 got no
+answer in both 235B runs (LLM timeouts, then HTTP 429 from the provider for three parallel calls); the client now
+retries more. The verifier itself is ~$0.001 per investigation. The default stays the single agent
+(`AGENT_MODE=single`); the stability runs (3 per scenario) decide whether the difference in top 3 is real.
+
 ## MLflow
 
 MLflow runs in the cluster (`mlflow.localhost:8090`) on the agent's own PostgreSQL (`deploy/db.yaml`: CNPG,
