@@ -19,6 +19,7 @@ def hypothesis(cause: str, *calls: int) -> dict[str, Any]:
         "cause": cause,
         "evidence": [{"call": c, "finding": f"shows {cause}"} for c in calls],
         "mitigation": f"undo {cause}",
+        "action": {"type": "restart_pod", "pod": cause.replace(" ", "-")},
     }
 
 
@@ -212,3 +213,13 @@ def test_shows_something() -> None:
     assert not team.shows_something('{"lines_returned": 0, "newest_first": []}')
     assert not team.shows_something('{"branch": "lab", "commits_newest_first": []}')
     assert not team.shows_something("Error executing tool loki_query: HTTP 400")
+
+
+async def test_the_action_of_the_top_hypothesis_and_none_for_noise(tmp_path: Path) -> None:
+    inv = await team.investigate(
+        PAYLOAD, settings(tmp_path), RoleLlm(scripted()), FakeTools(), Audit(str(tmp_path), "x")
+    )
+    assert inv.action == {"type": "restart_pod", "pod": "image-tag"}
+    noise = scripted([answer_reply(verdict(["H1"], triage="noise"))])
+    inv = await team.investigate(PAYLOAD, settings(tmp_path), RoleLlm(noise), FakeTools(), Audit(str(tmp_path), "x"))
+    assert inv.action == {"type": "none"}

@@ -23,18 +23,20 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 import yaml
+from mcp import Client
 
 from ai_sre_agent import investigator, rag, rules, team, tracking
 from ai_sre_agent.cli import ALERTMANAGER_URL, webhook_payload
 from ai_sre_agent.config import REPO_ROOT, Settings
 from ai_sre_agent.investigator import Investigation
+from ai_sre_agent.mcp_server.server import build_server
 
 SCENARIOS_DIR = REPO_ROOT / "scenarios"
 RESULTS_DIR = REPO_ROOT / "backtest" / "results"
@@ -69,6 +71,11 @@ class Result:
     prompt_version: str
     audit_path: str
     error: str = ""
+    # --apply-fix: the agent's action, what apply-fix.sh made of it, and whether the service recovered.
+    action: dict[str, str] = field(default_factory=dict)
+    fix: str = ""
+    recovered: bool | None = None
+    alert_to_recovery_s: float | None = None
 
 
 def score(inv: Investigation, expected: dict[str, Any]) -> tuple[int | None, bool]:
@@ -90,16 +97,25 @@ def _bash() -> str:
     return candidate if Path(candidate).exists() else (shutil.which("bash") or "bash")
 
 
-def run_script(path: Path, log: Path) -> None:
+def run_script(path: Path, log: Path, *args: str) -> str:
+    """Runs a scenario script with its output appended to `log`; returns the last line of that output."""
     with log.open("a", encoding="utf-8") as out:
-        out.write(f"\n$ {path.relative_to(REPO_ROOT)}\n")
+        out.write(f"\n$ {path.relative_to(REPO_ROOT)} {' '.join(args)}\n")
         out.flush()
+        start = out.tell()
         completed = subprocess.run(
-            [_bash(), str(path)], stdout=out, stderr=subprocess.STDOUT, timeout=SCRIPT_TIMEOUT_S, check=False
+            [_bash(), str(path), *args], stdout=out, stderr=subprocess.STDOUT, timeout=SCRIPT_TIMEOUT_S, check=False
         )
     if completed.returncode != 0:
         raise RuntimeError(f"{path.parent.name}/{path.name} failed with exit code {completed.returncode} (see {log})")
+    with log.open(encoding="utf-8") as f:
+        f.seek(start)
+        lines = f.read().strip().splitlines()
+    return lines[-1] if lines else ""
 
+
+FIX_SCRIPT = SCENARIOS_DIR / "apply-fix.sh"
+RECOVERY_TIMEOUT_S = 900  # after the fix; not recovered by then = the fix did not work
 
 # Error lines of the voting services; a quiet stand writes 0-3 a minute, a broken one hundreds.
 ERROR_LINES = 'sum(count_over_time({namespace="voting"} |~ "(?i)error|refused|reset|timeout|fatal" [%s]))'
@@ -140,6 +156,18 @@ class Stand:
             await asyncio.sleep(10)
         errors = await self.error_lines(logs_window)
         return [*await self.firing(), *([f"{errors} error lines in {logs_window}"] if errors > max_error_lines else [])]
+
+    async def wait_recovered(
+        self, alertname: str, timeout_s: int, logs_window: str = "5m", max_error_lines: int = 20
+    ) -> str | None:
+        """Recovered: the scenario's alert no longer fires and the voting logs are quiet again (the same bar as
+        settle). Returns the time it happened, or None if it did not within timeout_s."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if alertname not in await self.firing() and await self.error_lines(logs_window) <= max_error_lines:
+                return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            await asyncio.sleep(10)
+        return None
 
     async def silence(self, hours: float) -> str:
         now = datetime.now(UTC)
@@ -182,19 +210,58 @@ def _seconds_between(start: str, end: str) -> float | None:
     return round((b - a).total_seconds(), 1)
 
 
-async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, out: Path, agent: str) -> Result:
+async def check_tools(settings: Settings) -> None:
+    """The agent's Kubernetes tools must work: with an expired token every k8s_* call fails, and the agent
+    investigates half blind without anyone noticing (it happened: scripts/agent-kubeconfig.sh renews it)."""
+    async with Client(build_server(settings)) as client:
+        failed, text = await investigator.McpTools(client).call(
+            "k8s_events", {"namespace": "voting", "since": "5m", "limit": 1}
+        )
+    if failed:
+        raise RuntimeError(f"the agent's Kubernetes tools fail ({text[:200]}); renew: scripts/agent-kubeconfig.sh")
+
+
+def _state(name: str, key: str) -> str:
+    """What break.sh saved for restore.sh (lib.sh save_state), e.g. the sha of the breaking commit."""
+    path = SCENARIOS_DIR / ".state" / f"{name}.{key}"
+    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+
+
+def _fix_args(action: dict[str, str]) -> list[str]:
+    if action.get("type") == "revert":
+        return ["revert", action["sha"]]
+    if action.get("type") == "restart_pod":
+        return ["restart_pod", action["pod"]]
+    return []
+
+
+async def run_scenario(
+    name: str, run: int, settings: Settings, stand: Stand, out: Path, agent: str, apply_fix: bool = False
+) -> Result:
     log = out / "logs" / f"{name}-{run}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     still = await stand.settle()
     if still:
         print(f"  warning: still firing before {name}: {', '.join(still)}", flush=True)
+    await check_tools(settings)
     directory = SCENARIOS_DIR / name
+    fix, recovered_at, undo = "", None, ""
     try:
         await asyncio.to_thread(run_script, directory / "break.sh", log)
         expected = yaml.safe_load((SCENARIOS_DIR / ".state" / f"{name}.expected.yaml").read_text(encoding="utf-8"))
         payload = await _payload(expected["alert"], settings)
         inv = await {"rules": rules.run, "team": team.run}.get(agent, investigator.run)(payload, settings)
+        if apply_fix:
+            # The agent's action as a script applies it, then the time until the service is back on its own.
+            args = _fix_args(inv.action)
+            fix = await asyncio.to_thread(run_script, FIX_SCRIPT, log, *args) if args else "none"
+            words = fix.split()  # "applied revert <reverted sha> <revert commit>"
+            if words[:2] == ["applied", "revert"] and words[2] != _state(name, "sha"):
+                undo = words[3]  # a wrong revert changed the stand: taken back before restore.sh
+            recovered_at = await stand.wait_recovered(expected["alert"], RECOVERY_TIMEOUT_S)
     finally:
+        if undo:
+            await asyncio.to_thread(run_script, FIX_SCRIPT, log, "undo", undo)
         await asyncio.to_thread(run_script, directory / "restore.sh", log)
 
     rank, triage_ok = score(inv, expected)
@@ -221,6 +288,10 @@ async def run_scenario(name: str, run: int, settings: Settings, stand: Stand, ou
         prompt_version=inv.prompt_version,
         audit_path=inv.audit_path,
         error=inv.error,
+        action=inv.action if apply_fix else {},
+        fix=fix,
+        recovered=(recovered_at is not None) if apply_fix else None,
+        alert_to_recovery_s=_seconds_between(inv.alert_started_at, recovered_at) if recovered_at else None,
     )
 
 
@@ -240,6 +311,12 @@ def totals(results: list[Result]) -> dict[str, float]:
     }
     if answers:
         scores["median_alert_to_answer_s"] = statistics.median(answers)
+    fixed = [r for r in results if r.recovered is not None]
+    if fixed:
+        scores["recovered"] = sum(1 for r in fixed if r.recovered)
+        recoveries = [r.alert_to_recovery_s for r in fixed if r.alert_to_recovery_s is not None]
+        if recoveries:
+            scores["median_alert_to_recovery_s"] = statistics.median(recoveries)
     return scores
 
 
@@ -273,6 +350,24 @@ def summary(results: list[Result], label: str) -> str:
             f"- **Median cost**: ${t['median_cost_usd']:.4f}, total ${t['total_cost_usd']:.4f},"
             f" median tokens {t['median_tokens']}",
         ]
+    fixed = [r for r in results if r.recovered is not None]
+    if fixed:
+        t = totals(results)
+        lines += [
+            "",
+            "| Scenario | Action | Applied | Recovered | Alert → recovery |",
+            "|---|---|---|---|---|",
+        ]
+        for r in fixed:
+            action = " ".join(r.action.values())
+            lines.append(
+                f"| {r.scenario} #{r.run} | {action} | {r.fix} | {yes(bool(r.recovered))} | {r.alert_to_recovery_s}s |"
+            )
+        lines += [
+            "",
+            f"- **Recovered after the agent's fix**: {t['recovered']}/{len(fixed)},"
+            f" median alert → recovery {t.get('median_alert_to_recovery_s', 'n/a')}s",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -290,6 +385,7 @@ def _params(args: argparse.Namespace, scenarios: list[str], settings: Settings) 
         "runs": args.runs,
         "rag": llm and bool(settings.rag_database_url),
         "rag_top_k": settings.rag_top_k,
+        "apply_fix": args.apply_fix,
         "commit": commit.stdout.strip(),
     }
 
@@ -328,7 +424,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 for name in scenarios:
                     print(f"{name} #{run} ...", flush=True)
                     try:
-                        result = await run_scenario(name, run, settings, stand, out, args.agent)
+                        result = await run_scenario(name, run, settings, stand, out, args.agent, args.apply_fix)
                     except Exception as exc:  # a scenario that cannot run is reported, the others still run
                         print(f"  FAILED: {exc}", flush=True)
                         (out / "errors.log").open("a", encoding="utf-8").write(f"{name} #{run}: {exc}\n")
@@ -365,6 +461,9 @@ def main() -> None:
         choices=["llm", "team", "rules"],
         default="llm",
         help="one LLM agent, investigators + verifier, or the rule baseline",
+    )
+    parser.add_argument(
+        "--apply-fix", action="store_true", help="apply the agent's action and measure the time to recovery"
     )
     parser.add_argument("--no-rag", action="store_true", help="no runbooks in the context (ablation)")
     parser.add_argument("--no-silence", action="store_true", help="let the agent in the cluster answer too")

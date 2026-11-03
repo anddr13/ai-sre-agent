@@ -6,7 +6,7 @@ from typing import Any
 
 from ai_sre_agent.audit import Audit
 from ai_sre_agent.config import Settings
-from ai_sre_agent.investigator import Reply, ToolCall, describe_alerts, investigate
+from ai_sre_agent.investigator import Reply, ToolCall, describe_alerts, investigate, parse_action
 
 PAYLOAD = {
     "status": "firing",
@@ -178,3 +178,29 @@ async def test_unknown_triage_defaults_to_wake(tmp_path: Path) -> None:
     llm = ScriptedLlm([answer_reply(ANSWER | {"triage": "maybe"})])
     inv = await investigate(PAYLOAD, settings(tmp_path), llm, FakeTools(), Audit(str(tmp_path), "x"))
     assert inv.triage == "wake"
+
+
+def test_only_allowed_actions_survive() -> None:
+    assert parse_action({"type": "revert", "sha": "ABC1234"}) == {"type": "revert", "sha": "abc1234"}
+    assert parse_action({"type": "restart_pod", "pod": "voting-pg-2"}) == {"type": "restart_pod", "pod": "voting-pg-2"}
+    for bad in (
+        {"type": "revert", "sha": "HEAD~1"},
+        {"type": "revert", "sha": "abc; rm -rf /"},
+        {"type": "restart_pod", "pod": "--all"},
+        {"type": "exec", "command": "psql"},
+        "revert abc1234",
+        None,
+    ):
+        assert parse_action(bad) == {"type": "none"}
+
+
+async def test_the_action_is_part_of_the_answer(tmp_path: Path) -> None:
+    answer = ANSWER | {"action": {"type": "revert", "sha": "abc1234"}}
+    inv = await investigate(
+        PAYLOAD, settings(tmp_path), ScriptedLlm([answer_reply(answer)]), FakeTools(), Audit(str(tmp_path), "x")
+    )
+    assert inv.action == {"type": "revert", "sha": "abc1234"}
+    inv = await investigate(
+        PAYLOAD, settings(tmp_path), ScriptedLlm([answer_reply()]), FakeTools(), Audit(str(tmp_path), "x")
+    )
+    assert inv.action == {"type": "none"}

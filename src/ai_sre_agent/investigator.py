@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
 from mcp import Client
@@ -34,6 +34,12 @@ Monitoring (Prometheus, Loki) is in namespace monitoring.
 voting-gitops layout: charts/voting (the app; image.tag in charts/voting/values.yaml), charts/data (Kafka,
 PostgreSQL, Redis; their settings in charts/data/values.yaml), charts/alerts, envs/local.yaml (this stand's
 overrides), apps/ (the Argo CD Applications). A commit "voting: release <sha>" is a new image tag."""
+
+ACTION = """\
+The action is the one step that would fix the cause, from this list only: "revert" a commit of voting-gitops
+(branch lab, give its sha); "restart_pod" deletes one pod in namespace voting so its controller recreates it;
+"none" when it heals by itself or needs no action. A test script may apply it; you never do."""
+ACTION_JSON = '{"type": "revert", "sha": "<sha>"} | {"type": "restart_pod", "pod": "<pod>"} | {"type": "none"}'
 
 SYSTEM_PROMPT = (
     """\
@@ -58,6 +64,9 @@ fix but can wait for working hours; "noise" if it needs no action (a short spike
 errors, no user impact).
 The mitigation is advice for a human (for example "git revert <sha> on branch lab of voting-gitops"),
 never something you did.
+"""
+    + ACTION
+    + """
 
 When done, answer with only this JSON object, no other text:
 {"summary": "<one sentence: what is broken and why>",
@@ -66,6 +75,9 @@ When done, answer with only this JSON object, no other text:
  "confidence": "high" | "medium" | "low",
  "evidence": [{"call": <N>, "finding": "<what this result shows>"}],
  "mitigation": "<what a human should do now>",
+ "action": """
+    + ACTION_JSON
+    + """,
  "triage": "wake" | "morning" | "noise"}
 "alternatives" may be empty when the evidence leaves no other candidate."""
 )
@@ -73,6 +85,8 @@ When done, answer with only this JSON object, no other text:
 # Changes with every edit of the prompt, so backtest results can be grouped by prompt version.
 PROMPT_VERSION = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8]
 TRIAGE = ("wake", "morning", "noise")
+SHA = re.compile(r"[0-9a-f]{7,40}")
+POD = re.compile(r"[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?")
 
 FINAL_NUDGE = (
     "The investigation budget is used up. Give your final answer now, as the JSON object described in the "
@@ -200,6 +214,7 @@ class Investigation:
     alert_started_at: str = ""
     prompt_version: str = PROMPT_VERSION
     finished_at: str = ""
+    action: dict[str, str] = field(default_factory=lambda: {"type": "none"})  # see parse_action
 
     @property
     def noise(self) -> bool:
@@ -251,6 +266,19 @@ def alert_name(payload: dict[str, Any]) -> str:
 
 def alert_started_at(payload: dict[str, Any]) -> str:
     return min((a.get("startsAt", "") for a in payload.get("alerts", []) if a.get("status") == "firing"), default="")
+
+
+def parse_action(value: Any) -> dict[str, str]:
+    """The proposed fix as one of the allowed actions (a revert in voting-gitops, a pod restart in namespace voting);
+    anything else is no action. Only the backtest applies it, with its own credentials."""
+    if isinstance(value, dict):
+        kind = str(value.get("type") or "").lower()
+        sha, pod = str(value.get("sha") or "").lower(), str(value.get("pod") or "")
+        if kind == "revert" and SHA.fullmatch(sha):
+            return {"type": "revert", "sha": sha}
+        if kind == "restart_pod" and POD.fullmatch(pod):
+            return {"type": "restart_pod", "pod": pod}
+    return {"type": "none"}
 
 
 def triage_of(value: Any) -> str:
@@ -430,6 +458,7 @@ async def investigate(
         error=out.error,
         alert_started_at=alert_started_at(payload),
         finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        action=parse_action(answer.get("action")),
     )
     audit.write("result", **asdict(investigation))
     return investigation

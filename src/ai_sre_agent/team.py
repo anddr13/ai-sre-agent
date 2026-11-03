@@ -21,6 +21,8 @@ from ai_sre_agent import tracking
 from ai_sre_agent.audit import Audit
 from ai_sre_agent.config import Settings
 from ai_sre_agent.investigator import (
+    ACTION,
+    ACTION_JSON,
     STAND,
     Evidence,
     Investigation,
@@ -36,6 +38,7 @@ from ai_sre_agent.investigator import (
     describe_alerts,
     first_message,
     loop,
+    parse_action,
     retrieve,
     triage_of,
 )
@@ -74,11 +77,17 @@ Find names with k8s_describe and k8s_events instead of guessing them. Every tool
 A query that returns nothing is not evidence that something is down.
 Be economical: 3-6 tool calls. If nothing in your class explains the alert, say so with an empty list: a
 verifier reads your evidence, and a hypothesis it does not support only costs time.
+"""
+    + ACTION.replace("{", "{{").replace("}", "}}")
+    + """
 
 When done, answer with only this JSON object, no other text:
 {{"hypotheses": [{{"cause": "<the cause, with the specific object, revision or setting>",
                   "evidence": [{{"call": <N>, "finding": "<what this result shows>"}}],
-                  "mitigation": "<what a human should do now>"}}],
+                  "mitigation": "<what a human should do now>",
+                  "action": """
+    + ACTION_JSON.replace("{", "{{").replace("}", "}}")
+    + """}}],
  "impact": "<what your results show about users: errors, latency, since when, still going or resolved>"}}
 At most two hypotheses, the most likely first. A hypothesis without evidence from your calls is dropped."""
 )
@@ -131,6 +140,7 @@ class Hypothesis:
     cause: str
     mitigation: str
     evidence: list[Evidence]  # call numbers renumbered across all investigators
+    action: dict[str, str]
 
 
 @dataclass
@@ -193,7 +203,14 @@ def hypotheses(reports: list[Report]) -> tuple[list[Hypothesis], list[str]]:
                 dropped.append(f"{report.investigator}: {cause}")
                 continue
             kept.append(
-                Hypothesis(f"H{len(kept) + 1}", report.investigator, cause, str(item.get("mitigation") or ""), evidence)
+                Hypothesis(
+                    f"H{len(kept) + 1}",
+                    report.investigator,
+                    cause,
+                    str(item.get("mitigation") or ""),
+                    evidence,
+                    parse_action(item.get("action")),
+                )
             )
     return kept, dropped
 
@@ -311,6 +328,7 @@ async def investigate(
     audit.write("verdict", ranking=[h.id for h in ranked], rejected=rejected)
 
     top = ranked[0] if ranked else None
+    triage = triage_of(verdict.get("triage"))
     investigation = Investigation(
         investigation_id=audit.investigation_id,
         alertname=alertname,
@@ -318,7 +336,7 @@ async def investigate(
         root_cause=top.cause if top else "",
         confidence=confidence,
         mitigation=str(verdict.get("mitigation") or (top.mitigation if top else "")),
-        triage=triage_of(verdict.get("triage")),
+        triage=triage,
         alternatives=[h.cause for h in ranked[1:3]],
         evidence=top.evidence if top else [],
         stopped_by="error" if error and not top else "answer",
@@ -333,6 +351,8 @@ async def investigate(
         alert_started_at=alert_started_at(payload),
         prompt_version=PROMPT_VERSION,
         finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # The fix of the cause ranked first; nothing to do for noise or without a supported cause.
+        action=top.action if top and triage != "noise" else {"type": "none"},
     )
     audit.write("result", **asdict(investigation))
     return investigation

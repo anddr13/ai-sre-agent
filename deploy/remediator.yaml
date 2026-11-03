@@ -1,0 +1,32 @@
+# The identity that applies the agent's proposed fix in the backtest (scenarios/apply-fix.sh), never the agent's.
+# The fix comes from an LLM, so it gets as little as the allowed actions need: delete pods in namespace voting, so
+# their controller recreates them. The other action, a git revert, goes through voting-gitops and Argo CD.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-sre-remediator
+  namespace: ai-sre-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-sre-remediator
+  namespace: voting
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-sre-remediator
+  namespace: voting
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ai-sre-remediator
+subjects:
+  - kind: ServiceAccount
+    name: ai-sre-remediator
+    namespace: ai-sre-agent

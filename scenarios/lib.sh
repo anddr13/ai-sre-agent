@@ -107,8 +107,15 @@ gitops_push() {
 }
 
 # gitops_revert SHA: a revert commit, never a reset or force push, so the history shows deploy -> rollback.
+# Prints the sha to sync to. Idempotent: when SHA is already reverted (the agent's fix did it), nothing is pushed.
 gitops_revert() {
-  git -C "$GITOPS_DIR" revert --no-edit "$1" > /dev/null
+  local full
+  full=$(git -C "$GITOPS_DIR" rev-parse --verify "$1^{commit}")
+  if [ -n "$(git -C "$GITOPS_DIR" log --format=%H --grep="This reverts commit $full" HEAD)" ]; then
+    git -C "$GITOPS_DIR" rev-parse HEAD
+    return
+  fi
+  git -C "$GITOPS_DIR" revert --no-edit "$full" > /dev/null
   gitops_push
 }
 

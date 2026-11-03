@@ -43,6 +43,7 @@ async def test_pod_not_starting_names_the_image_and_the_latest_release(tmp_path:
     assert "ImagePullBackOff" in inv.root_cause and "ebac3bd" in inv.root_cause
     assert tools.calls == ["k8s_describe", "gitops_log"]
     assert inv.model == "rules" and inv.tokens == 0
+    assert inv.action == {"type": "revert", "sha": "ebac3bd"}
 
 
 async def test_replica_lag_picks_the_worst_replica(tmp_path: Path) -> None:

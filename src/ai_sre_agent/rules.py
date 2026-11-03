@@ -5,6 +5,7 @@ scenarios as the agent (`ai-sre-backtest --agent rules`), which shows where the 
 """
 
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from ai_sre_agent.redact import Redactor
 
 MODEL = "rules"
 PROMPT_VERSION = "rules-v1"
+REVISION = re.compile(r"revision ([0-9a-f]{7})")
 
 
 @dataclass
@@ -194,6 +196,12 @@ async def investigate(payload: dict[str, Any], tools: Tools, audit: Audit) -> In
         alert_started_at=min((a.get("startsAt", "") for a in firing), default=""),
         prompt_version=PROMPT_VERSION,
         finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # The rules' only fix: revert the revision their mitigation names.
+        action=(
+            {"type": "revert", "sha": revision[1]}
+            if (revision := REVISION.search(finding.mitigation))
+            else {"type": "none"}
+        ),
     )
     audit.write("result", root_cause=result.root_cause, triage=result.triage, error=error)
     return result
