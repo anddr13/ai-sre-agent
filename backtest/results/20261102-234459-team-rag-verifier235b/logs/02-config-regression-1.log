@@ -1,0 +1,16 @@
+
+$ scenarios\02-config-regression\break.sh
+[00:06:51] pushed 2a76556: RATE_LIMIT_SECONDS "3" -> "3s"
+[00:06:51] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/02-config-regression.expected.yaml
+[00:06:53] k6: 50 votes/s for 20m (container k6-02-config-regression)
+[00:07:37] voting is Synced and Healthy at 2a76556 (last operation: Succeeded)
+[00:07:37] waiting for VotingHttp5xxRate to be firing (up to 600s)
+[00:10:03] VotingHttp5xxRate is firing after 146s
+
+$ scenarios\02-config-regression\restore.sh
+[00:11:59] pushed revert 7f0fd73 of 2a76556
+[00:12:30] voting is Synced and Healthy at 7f0fd73 (last operation: Succeeded)
+[00:12:32] all Deployments in voting rolled out
+[00:12:33] k6 stopped
+[00:12:33] waiting for VotingHttp5xxRate to be resolved (up to 420s)
+[00:15:00] VotingHttp5xxRate is not firing after 147s
