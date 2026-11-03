@@ -53,7 +53,10 @@ prom_query() {
 
 # alert_firing NAME: exit 0 if the voting alert NAME is firing now.
 alert_firing() {
-  prom_query "ALERTS{alertname=\"$1\",stand=\"voting\",alertstate=\"firing\"}" | grep -q '"alertname"'
+  # Not piped into grep -q: under pipefail the SIGPIPE of an early match would read as "not firing".
+  local result
+  result=$(prom_query "ALERTS{alertname=\"$1\",stand=\"voting\",alertstate=\"firing\"}")
+  grep -q '"alertname"' <<< "$result"
 }
 
 # wait_alert NAME firing|resolved TIMEOUT_S
