@@ -1,0 +1,29 @@
+#cloud-config
+# The tools of the laptop stand, at the laptop's versions: Docker, kind, kubectl, helm, uv. stands.sh waits for
+# `cloud-init status --wait`, then clones the repositories and brings the stand up as the ubuntu user.
+package_update: true
+packages: [docker.io, git, jq, curl, tmux, rsync]
+
+write_files:
+  # kind's known limits: with ~80 pods on one node the defaults run out of inotify instances.
+  - path: /etc/sysctl.d/90-kind.conf
+    content: |
+      fs.inotify.max_user_watches = 524288
+      fs.inotify.max_user_instances = 512
+
+runcmd:
+  - sysctl --system
+  - usermod -aG docker ubuntu
+  - systemctl enable --now docker
+  - |
+    set -eu
+    cd /tmp
+    curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+    curl -fsSL https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64.sha256sum | sed 's#kind-linux-amd64#kind#' | sha256sum -c
+    curl -fsSLo kubectl https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl
+    echo "$(curl -fsSL https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl.sha256)  kubectl" | sha256sum -c
+    curl -fsSLo helm.tgz https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz
+    echo "$(curl -fsSL https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz.sha256sum | cut -d' ' -f1)  helm.tgz" | sha256sum -c
+    tar -xzf helm.tgz linux-amd64/helm
+    install -m 0755 kind kubectl linux-amd64/helm /usr/local/bin/
+    curl -fsSL https://astral.sh/uv/0.13.6/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh

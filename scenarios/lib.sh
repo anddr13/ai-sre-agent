@@ -7,13 +7,14 @@
 # Environment:
 #   GITOPS_DIR  voting-gitops checkout on the lab branch (default: ../voting-gitops next to this repo)
 #   K6_IMAGE    k6 image for the background load (default grafana/k6:2.3.0)
+#   GITOPS_BRANCH  the branch the stand follows (default lab; lab-N on the EC2 stands, see cloud/README.md)
 
 set -euo pipefail
 
 SCENARIOS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATE_DIR="$SCENARIOS_DIR/.state"
 GITOPS_DIR=${GITOPS_DIR:-$SCENARIOS_DIR/../../voting-gitops}
-GITOPS_BRANCH=lab
+GITOPS_BRANCH=${GITOPS_BRANCH:-lab}
 CLUSTER=voting-local
 NODE=$CLUSTER-control-plane
 NS=voting

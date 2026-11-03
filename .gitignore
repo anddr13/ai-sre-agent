@@ -13,3 +13,11 @@ __pycache__/
 audit/
 .state/
 .cache/
+
+# cloud/: Terraform state of the EC2 stands, their logs and the id of the deploy key
+cloud/.terraform/
+cloud/.terraform.lock.hcl
+cloud/terraform.tfstate*
+cloud/tfplan
+cloud/logs/
+cloud/.deploy-key-id
