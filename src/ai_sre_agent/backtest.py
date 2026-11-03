@@ -360,13 +360,12 @@ def summary(results: list[Result], label: str) -> str:
         ]
         for r in fixed:
             action = " ".join(r.action.values())
-            lines.append(
-                f"| {r.scenario} #{r.run} | {action} | {r.fix} | {yes(bool(r.recovered))} | {r.alert_to_recovery_s}s |"
-            )
+            recovery = f"{r.alert_to_recovery_s}s" if r.alert_to_recovery_s is not None else "-"
+            lines.append(f"| {r.scenario} #{r.run} | {action} | {r.fix} | {yes(bool(r.recovered))} | {recovery} |")
         lines += [
             "",
             f"- **Recovered after the agent's fix**: {t['recovered']}/{len(fixed)},"
-            f" median alert → recovery {t.get('median_alert_to_recovery_s', 'n/a')}s",
+            f" median alert → recovery {t.get('median_alert_to_recovery_s', '-')}s",
         ]
     return "\n".join(lines) + "\n"
 

@@ -43,7 +43,9 @@ case "${1:-}" in
     sha=$(git -C "$GITOPS_DIR" rev-parse --verify --quiet "${2}^{commit}") ||
       { echo "rejected: $2 is not a commit of voting-gitops"; exit 0; }
     # A recent commit only: the fix of an incident, not a rewrite of history.
-    git -C "$GITOPS_DIR" rev-list -n 30 HEAD | grep -qx "$sha" ||
+    # (Not `rev-list | grep -q`: grep stops at the match, git gets SIGPIPE, and pipefail calls it a failure.)
+    recent=$(git -C "$GITOPS_DIR" rev-list -n 30 HEAD)
+    grep -qx "$sha" <<< "$recent" ||
       { echo "rejected: $2 is not among the last 30 commits of $GITOPS_BRANCH"; exit 0; }
     [ -z "$(git -C "$GITOPS_DIR" log --format=%H --grep="This reverts commit $sha" HEAD)" ] ||
       { echo "rejected: $2 is already reverted"; exit 0; }
