@@ -249,8 +249,10 @@ cmd_collect() {
   local n
   mkdir -p "$LOGS"
   for n in $(stand_numbers); do
-    # No rsync in Git Bash: a tar stream. Result directories are named by time, so nothing local is overwritten.
-    on "$n" 'cd ai-sre-agent && mkdir -p backtest/results audit && tar -cf - backtest/results audit' | tar -xf -
+    # No rsync in Git Bash: a tar stream. Only the untracked result directories: the committed ones are in the
+    # machine's clone too, and their line endings differ from the laptop's checkout.
+    on "$n" 'cd ai-sre-agent && mkdir -p audit && tar -cf - audit $(git ls-files --others --directory backtest/results)' |
+      tar -xf -
     on "$n" 'cat ~/prepare.log ~/backtest.log 2> /dev/null' > "$LOGS/stand-$n.log" || true
     log "stand $n collected (log $LOGS/stand-$n.log)"
   done
