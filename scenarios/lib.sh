@@ -7,7 +7,7 @@
 # Environment:
 #   GITOPS_DIR  voting-gitops checkout on the lab branch (default: ../voting-gitops next to this repo)
 #   K6_IMAGE    k6 image for the background load (default grafana/k6:2.3.0)
-#   GITOPS_BRANCH  the branch the stand follows (default lab; lab-N on the EC2 stands, see cloud/README.md)
+#   GITOPS_BRANCH  the branch the stand follows (default lab; lab-N on the GCE stands, see cloud/README.md)
 
 set -euo pipefail
 

@@ -1,23 +1,34 @@
-# EC2 machines for the backtest, each with the same kind stand as the laptop (voting-infra-local), so several
+# GCE machines for the backtest, each with the same kind stand as the laptop (voting-infra-local), so several
 # backtests run at once with the scenarios unchanged and results that compare with the local ones.
 # cloud/stands.sh drives it (see cloud/README.md). Local state: a short-lived lab; `stands.sh leftovers` finds
-# anything that outlived it by tag.
+# anything that outlived it by label.
 
 terraform {
   required_version = ">= 1.10"
 
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.70"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 8.8"
     }
   }
 }
 
-variable "region" {
-  description = "AWS region."
+variable "project_id" {
+  description = "GCP project ID (with billing enabled)."
   type        = string
-  default     = "eu-north-1"
+}
+
+variable "region" {
+  description = "GCP region."
+  type        = string
+  default     = "europe-central2"
+}
+
+variable "zone" {
+  description = "Zone of the machines."
+  type        = string
+  default     = "europe-central2-a"
 }
 
 variable "stands" {
@@ -26,10 +37,10 @@ variable "stands" {
   default     = 3
 }
 
-variable "instance_type" {
-  description = "On-Demand (this account's organization SCP denies Spot). The kind stand uses 7-9 GiB, the runner ~1 GiB."
+variable "machine_type" {
+  description = "Not Spot: a reclaimed machine would lose a 3-hour backtest. The kind stand uses 7-9 GiB, the runner ~1 GiB."
   type        = string
-  default     = "m6i.2xlarge"
+  default     = "e2-standard-8"
 }
 
 variable "ssh_public_key" {
@@ -42,15 +53,15 @@ variable "ssh_cidr" {
   type        = string
 }
 
-provider "aws" {
-  region = var.region
+provider "google" {
+  project = var.project_id
+  region  = var.region
+  zone    = var.zone
 
-  default_tags {
-    tags = {
-      project    = "ai-sre-agent"
-      purpose    = "backtest-stands"
-      managed-by = "terraform"
-    }
+  default_labels = {
+    project    = "ai-sre-agent"
+    purpose    = "backtest-stands"
+    managed-by = "terraform"
   }
 }
 
@@ -58,123 +69,64 @@ locals {
   name = "ai-sre-stands"
 }
 
-data "aws_availability_zones" "available" {
-  state = "available"
+# A network of its own: nothing open but SSH from the laptop. The stand listens on 127.0.0.1 of the machine.
+resource "google_compute_network" "this" {
+  name                    = local.name
+  auto_create_subnetworks = false
 }
 
-# Ubuntu 24.04: Docker, kind and the rest come from cloud-init.yaml.
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
+resource "google_compute_subnetwork" "this" {
+  name          = local.name
+  network       = google_compute_network.this.id
+  ip_cidr_range = "10.42.0.0/24"
+}
 
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+resource "google_compute_firewall" "ssh" {
+  name          = "${local.name}-ssh"
+  network       = google_compute_network.this.id
+  direction     = "INGRESS"
+  source_ranges = [var.ssh_cidr]
+  target_tags   = [local.name]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
   }
 }
 
-# A VPC of its own with one public subnet: no NAT gateway, and nothing open but SSH from the laptop.
-resource "aws_vpc" "this" {
-  cidr_block           = "10.42.0.0/16"
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-
-  tags = {
-    Name = local.name
-  }
-}
-
-resource "aws_internet_gateway" "this" {
-  vpc_id = aws_vpc.this.id
-
-  tags = {
-    Name = local.name
-  }
-}
-
-resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.this.id
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  cidr_block              = cidrsubnet(aws_vpc.this.cidr_block, 8, 0)
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "${local.name}-public"
-  }
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.this.id
-  }
-
-  tags = {
-    Name = "${local.name}-public"
-  }
-}
-
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_security_group" "stand" {
-  name        = local.name
-  description = "SSH from the laptop only; the stand itself listens on 127.0.0.1"
-  vpc_id      = aws_vpc.this.id
-
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_cidr]
-  }
-
-  egress {
-    description = "Images, GitHub, the LLM API"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-resource "aws_key_pair" "this" {
-  key_name   = local.name
-  public_key = var.ssh_public_key
-}
-
-resource "aws_instance" "stand" {
+resource "google_compute_instance" "stand" {
   count = var.stands
 
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.instance_type
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.stand.id]
-  key_name               = aws_key_pair.this.key_name
-  user_data              = file("${path.module}/cloud-init.yaml")
+  name         = "${local.name}-${count.index + 1}"
+  machine_type = var.machine_type
+  tags         = [local.name]
 
-  # IMDSv2 only.
-  metadata_options {
-    http_tokens = "required"
+  boot_disk {
+    initialize_params {
+      # Ubuntu 24.04: Docker, kind and the rest come from cloud-init.yaml.
+      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
+      size  = 80
+      type  = "pd-balanced"
+    }
   }
 
-  root_block_device {
-    volume_type           = "gp3"
-    volume_size           = 80
-    delete_on_termination = true
+  network_interface {
+    subnetwork = google_compute_subnetwork.this.id
+    # An ephemeral public IP: the machines pull images and talk to GitHub and the LLM API, no Cloud NAT needed.
+    access_config {}
   }
 
-  tags = {
-    Name = "${local.name}-${count.index + 1}"
+  metadata = {
+    user-data              = file("${path.module}/cloud-init.yaml")
+    ssh-keys               = "ubuntu:${var.ssh_public_key}"
+    block-project-ssh-keys = "true"
+    enable-oslogin         = "FALSE"
   }
+
+  # No service account: nothing on the machine needs the GCP API.
 }
 
 output "ips" {
-  description = "Public IPs, stand 1 first."
-  value       = aws_instance.stand[*].public_ip
+  description = "Public IPs, stand 1 first, one per line."
+  value       = join("\n", google_compute_instance.stand[*].network_interface[0].access_config[0].nat_ip)
 }

@@ -14,7 +14,7 @@ audit/
 .state/
 .cache/
 
-# cloud/: Terraform state of the EC2 stands, their logs and the id of the deploy key
+# cloud/: Terraform state of the GCE stands, their logs and the id of the deploy key
 cloud/.terraform/
 cloud/.terraform.lock.hcl
 cloud/terraform.tfstate*

@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# Backtest stands on EC2: each machine runs the laptop's kind stand (voting-infra-local) and one backtest, so
+# Backtest stands on GCE: each machine runs the laptop's kind stand (voting-infra-local) and one backtest, so
 # ablations and repeats run side by side. Stand N follows its own branch lab-N of voting-gitops, because the
-# scenarios commit their breakages there. Run from WSL in the repository root; see cloud/README.md.
+# scenarios commit their breakages there. Everything long runs in tmux on the machines: the laptop may switch
+# off after `run`. Run from Git Bash in the repository root; see cloud/README.md.
 #
-#   cloud/stands.sh up                   terraform plan + apply (asks), then waits for cloud-init
-#   cloud/stands.sh prepare [N...]       branch lab-N, repositories, .env, the stand, tokens, agent-db port-forward
+#   cloud/stands.sh plan                 terraform plan into cloud/tfplan (read it)
+#   cloud/stands.sh up                   apply cloud/tfplan, then wait for SSH and cloud-init
+#   cloud/stands.sh prepare [N...]       branch lab-N, .env, deploy key; the stand itself comes up in tmux (~20 min)
 #   cloud/stands.sh run N|all [KEY=value...] ARGS...
-#                                        ai-sre-backtest ARGS in tmux on stand N (or every stand), KEY=value over .env
-#   cloud/stands.sh status               the last lines of every backtest log
+#                                        ai-sre-backtest ARGS in tmux on stand N (or every stand), once it is
+#                                        prepared; KEY=value wins over .env
+#   cloud/stands.sh status               prepare and backtest state of every stand
 #   cloud/stands.sh collect              backtest/results and audit/ of every stand into this checkout
 #   cloud/stands.sh ssh N                a shell on stand N
 #   cloud/stands.sh down                 terraform destroy, then the lab-N branches and the deploy key
-#   cloud/stands.sh leftovers            anything tagged ai-sre-agent still running in the region
+#   cloud/stands.sh leftovers            anything labelled ai-sre-agent still in the project
 #
-# Environment: AWS_PROFILE (gpu-lab-terraform), REGION (eu-north-1), STANDS (3), AGENT_REF (main: the
-# ai-sre-agent revision the stands check out; push first), GH (gh, or gh.exe from WSL).
+# Environment: PROJECT (voting-gke-cdzjn), STANDS (3), AGENT_REF (main: the ai-sre-agent revision the stands
+# check out; push first), GH (gh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export AWS_PROFILE=${AWS_PROFILE:-gpu-lab-terraform}
-export AWS_REGION=${REGION:-eu-north-1}
+PROJECT=${PROJECT:-voting-gke-cdzjn}
 STANDS=${STANDS:-3}
 AGENT_REF=${AGENT_REF:-main}
 OWNER=anddr13
@@ -32,42 +34,52 @@ KEY_ID_FILE=cloud/.deploy-key-id
 LOGS=cloud/logs
 # Only these reach the machines; Slack stays on the laptop (empty values switch it off).
 ENV_KEYS=(LLM_BASE_URL LLM_MODEL LLM_API_KEY VERIFIER_MODEL MLFLOW_TRACKING_URI)
-GH=${GH:-$(command -v gh || command -v gh.exe || echo gh)}
+GH=${GH:-gh}
 
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 
 session() {
-  aws sts get-caller-identity --query Arn --output text > /dev/null 2>&1 ||
-    { echo "AWS session expired: run  aws login --remote --profile gpu-lab" >&2; exit 1; }
+  gcloud auth application-default print-access-token > /dev/null 2>&1 ||
+    { echo "No Google credentials: run  gcloud auth application-default login" >&2; exit 1; }
 }
 
-ips() { terraform -chdir=cloud output -json ips | jq -r '.[]'; }
+tf() { terraform -chdir=cloud "$@"; }
+tf_vars() { # the variables only have to be valid for destroy, which works from the state
+  echo -var project_id="$PROJECT" -var stands="$1" -var ssh_cidr="$2"
+}
+ips() { tf output -raw ips; }
 ip_of() {
   local ip
   ip=$(ips | sed -n "${1}p")
   [ -n "$ip" ] || { echo "no stand $1" >&2; exit 1; }
   echo "$ip"
 }
+SSH_OPTS=(-i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS"
+  -o ServerAliveInterval=30)
 on() { # on N COMMAND...: run on stand N as ubuntu
   local ip
   ip=$(ip_of "$1")
   shift
-  ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$KNOWN_HOSTS" \
-    -o ServerAliveInterval=30 "ubuntu@$ip" "$@"
+  ssh "${SSH_OPTS[@]}" "ubuntu@$ip" "$@"
 }
+copy_to() { scp -q "${SSH_OPTS[@]}" "$2" "ubuntu@$(ip_of "$1"):$3"; } # copy_to N LOCAL REMOTE
 stand_numbers() { if [ $# -gt 0 ]; then echo "$@"; else seq 1 "$(ips | wc -l)"; fi; }
 
-cmd_up() {
+cmd_plan() {
   session
   [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C ai-sre-stands -f "$KEY"
   local my_ip
   my_ip=$(curl -fsS https://checkip.amazonaws.com)
-  terraform -chdir=cloud init -input=false > /dev/null
-  terraform -chdir=cloud plan -input=false -out=tfplan -var stands="$STANDS" \
-    -var ssh_public_key="$(cat "$KEY.pub")" -var ssh_cidr="$my_ip/32"
-  read -r -p "Apply this plan? [y/N] " answer
-  [ "$answer" = y ] || { echo "Not applied."; exit 1; }
-  terraform -chdir=cloud apply -input=false tfplan
+  tf init -input=false > /dev/null
+  # shellcheck disable=SC2046 # word splitting of tf_vars is the point
+  tf plan -input=false -out=tfplan $(tf_vars "$STANDS" "$my_ip/32") -var ssh_public_key="$(cat "$KEY.pub")"
+  echo "Read the plan above, then: cloud/stands.sh up"
+}
+
+cmd_up() {
+  session
+  [ -f cloud/tfplan ] || { echo "no cloud/tfplan: run cloud/stands.sh plan first" >&2; exit 1; }
+  tf apply -input=false tfplan
   rm -f cloud/tfplan
   for n in $(stand_numbers); do
     log "stand $n: waiting for SSH and cloud-init"
@@ -86,40 +98,28 @@ deploy_key() {
   log "deploy key $(cat "$KEY_ID_FILE") added to $GITOPS_REPO"
 }
 
-prepare_one() {
-  local n=$1 branch=lab-$1 env_file
-  env_file=$(mktemp)
-  for key in "${ENV_KEYS[@]}"; do grep -E "^$key=" .env | tail -1 >> "$env_file" || true; done
-  printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$env_file"
-  scp -q -i "$KEY" -o IdentitiesOnly=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
-    "$env_file" "ubuntu@$(ip_of "$n"):agent.env"
-  scp -q -i "$KEY" -o IdentitiesOnly=yes -o UserKnownHostsFile="$KNOWN_HOSTS" \
-    "$GITOPS_KEY" "ubuntu@$(ip_of "$n"):.ssh/gitops"
-  rm -f "$env_file"
-
-  # ssh hands the remote shell one string: quote the arguments for it (the name has a space).
-  on "$n" "bash -s -- $(printf '%q ' "$branch" "$AGENT_REF" "$OWNER" "$(git -C "$GITOPS_DIR" config user.name)" \
-    "$(git -C "$GITOPS_DIR" config user.email)")" << 'EOF'
+# Runs on the machine, in tmux: brings the stand up from the repositories. Settings come from ~/stand.env.
+PREPARE=$(
+  cat << 'EOF'
 set -euo pipefail
-branch=$1 ref=$2 owner=$3 name=$4 email=$5
+. ~/stand.env
 chmod 600 ~/.ssh/gitops
 ssh-keyscan -q github.com >> ~/.ssh/known_hosts 2> /dev/null
-# GITOPS_BRANCH is read by the scenario scripts and by the agent's gitops_log tool.
-echo "export GITOPS_BRANCH=$branch MLFLOW_DISABLE_AGENT_HINT=1" > ~/stand.env
 
-[ -d ai-sre-agent ] || git clone -q "https://github.com/$owner/ai-sre-agent.git"
-git -C ai-sre-agent fetch -q origin "$ref" && git -C ai-sre-agent checkout -q --detach FETCH_HEAD
-[ -d voting-infra-local ] || git clone -q "https://github.com/$owner/voting-infra-local.git"
-[ -d voting-gitops ] || git clone -q "git@github.com:$owner/voting-gitops.git"
+[ -d ai-sre-agent ] || git clone -q "https://github.com/$OWNER/ai-sre-agent.git"
+git -C ai-sre-agent fetch -q origin "$AGENT_REF" && git -C ai-sre-agent checkout -q --detach FETCH_HEAD
+[ -d voting-infra-local ] || git clone -q "https://github.com/$OWNER/voting-infra-local.git"
+git -C voting-infra-local pull -q --ff-only
+[ -d voting-gitops ] || git clone -q "git@github.com:$OWNER/voting-gitops.git"
 git -C voting-gitops config core.sshCommand "ssh -i ~/.ssh/gitops -o IdentitiesOnly=yes"
-git -C voting-gitops config user.name "$name"
-git -C voting-gitops config user.email "$email"
-git -C voting-gitops fetch -q origin && git -C voting-gitops checkout -q -B "$branch" "origin/$branch"
-mv ~/agent.env ai-sre-agent/.env
+git -C voting-gitops config user.name "$GIT_NAME"
+git -C voting-gitops config user.email "$GIT_EMAIL"
+git -C voting-gitops fetch -q origin && git -C voting-gitops checkout -q -B "$GITOPS_BRANCH" "origin/$GITOPS_BRANCH"
+cp ~/agent.env ai-sre-agent/.env
 
 cd ai-sre-agent
 uv sync -q
-GITOPS_REVISION=$branch ../voting-infra-local/scripts/up.sh
+GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
 export KUBECONFIG=~/.kube/kind-voting-local.yaml
 until kubectl get namespace ai-sre-agent > /dev/null 2>&1; do sleep 10; done
 scripts/agent-secret.sh
@@ -130,31 +130,41 @@ SA=ai-sre-remediator TOKEN_TTL=96h scripts/agent-kubeconfig.sh
 tmux kill-session -t db 2> /dev/null || true
 tmux new-session -d -s db scripts/agent-db.sh
 scripts/check-rbac.sh > /dev/null && echo "RBAC check passed"
-echo "stand ready on $branch"
+echo "stand ready on $GITOPS_BRANCH"
 EOF
+)
+
+prepare_one() {
+  local n=$1 tmp
+  tmp=$(mktemp -d)
+  for key in "${ENV_KEYS[@]}"; do grep -E "^$key=" .env | tail -1 >> "$tmp/agent.env" || true; done
+  printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$tmp/agent.env"
+  # GITOPS_BRANCH is read by the scenario scripts and by the agent's gitops_log tool.
+  printf 'export %s\n' "$(printf '%q ' GITOPS_BRANCH="lab-$n" MLFLOW_DISABLE_AGENT_HINT=1 AGENT_REF="$AGENT_REF" \
+    OWNER="$OWNER" GIT_NAME="$(git -C "$GITOPS_DIR" config user.name)" \
+    GIT_EMAIL="$(git -C "$GITOPS_DIR" config user.email)")" > "$tmp/stand.env"
+  printf '%s\n' "$PREPARE" > "$tmp/prepare.sh"
+  copy_to "$n" "$tmp/agent.env" agent.env
+  copy_to "$n" "$tmp/stand.env" stand.env
+  copy_to "$n" "$tmp/prepare.sh" prepare.sh
+  copy_to "$n" "$GITOPS_KEY" .ssh/gitops
+  rm -rf "$tmp"
+  on "$n" "rm -f ~/prepare.exit; tmux kill-session -t prepare 2> /dev/null;
+    tmux new-session -d -s prepare 'bash ~/prepare.sh > ~/prepare.log 2>&1; echo \$? > ~/prepare.exit'"
+  log "stand $n: preparing in tmux (cloud/stands.sh status)"
 }
 
 cmd_prepare() {
   [ -f .env ] || { echo "no .env in $(pwd)" >&2; exit 1; }
   deploy_key
-  mkdir -p "$LOGS"
-  local pids=() n
-  # One after another, before the parallel part: they share the local clone.
   git -C "$GITOPS_DIR" fetch -q origin lab
+  local n
   for n in $(stand_numbers "$@"); do
     # A fresh lab-N from lab: leftovers of an earlier session's scenarios must not carry over.
     git -C "$GITOPS_DIR" push -q --force origin "origin/lab:refs/heads/lab-$n"
     log "stand $n: lab-$n = lab ($(git -C "$GITOPS_DIR" rev-parse --short origin/lab))"
+    prepare_one "$n"
   done
-  for n in $(stand_numbers "$@"); do
-    prepare_one "$n" > "$LOGS/prepare-$n.log" 2>&1 &
-    pids+=($!)
-    log "stand $n: preparing (log $LOGS/prepare-$n.log)"
-  done
-  local failed=0
-  for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
-  ((failed == 0)) || { echo "a stand failed to prepare, see $LOGS/" >&2; exit 1; }
-  log "all stands ready"
 }
 
 cmd_run() {
@@ -171,6 +181,8 @@ cmd_run() {
     on "$n" tmux has-session -t bt 2> /dev/null && { echo "stand $n: a backtest is still running" >&2; exit 1; }
     # The command goes into a file rather than through two more layers of quoting (ssh, then tmux).
     on "$n" 'cat > ~/run.sh' << EOF
+until [ -f ~/prepare.exit ]; do sleep 30; done
+[ "\$(cat ~/prepare.exit)" = 0 ] || { echo "the stand did not come up, see ~/prepare.log"; exit 1; }
 cd ~/ai-sre-agent && . ~/stand.env
 ${env[*]:+export $(printf '%q ' "${env[@]}")}
 echo "=== \$(date -u +%FT%TZ) ${env[*]} ai-sre-backtest $args"
@@ -184,22 +196,21 @@ EOF
 cmd_status() {
   local n
   for n in $(stand_numbers); do
-    echo "--- stand $n $(on "$n" 'tmux has-session -t bt 2> /dev/null && echo running || echo idle')"
-    on "$n" 'tail -n 4 ~/backtest.log 2> /dev/null' || true
+    on "$n" 'p=$( [ -f ~/prepare.exit ] && echo "exit $(cat ~/prepare.exit)" || echo running);
+      b=$(tmux has-session -t bt 2> /dev/null && echo running || echo idle);
+      echo "--- prepare: $p, backtest: $b"; tail -n 2 ~/prepare.log 2> /dev/null; tail -n 4 ~/backtest.log 2> /dev/null' |
+      sed "1s/^---/--- stand $n/" || echo "--- stand $n: no answer"
   done
 }
 
 cmd_collect() {
-  local n ip
-  mkdir -p "$LOGS" backtest/results audit
+  local n
+  mkdir -p "$LOGS"
   for n in $(stand_numbers); do
-    ip=$(ip_of "$n")
-    for dir in backtest/results audit; do
-      rsync -a -e "ssh -i $KEY -o IdentitiesOnly=yes -o UserKnownHostsFile=$KNOWN_HOSTS" \
-        "ubuntu@$ip:ai-sre-agent/$dir/" "$dir/"
-    done
-    on "$n" 'cat ~/backtest.log 2> /dev/null' > "$LOGS/backtest-$n.log" || true
-    log "stand $n collected"
+    # No rsync in Git Bash: a tar stream. Result directories are named by time, so nothing local is overwritten.
+    on "$n" 'cd ai-sre-agent && mkdir -p backtest/results audit && tar -cf - backtest/results audit' | tar -xf -
+    on "$n" 'cat ~/prepare.log ~/backtest.log 2> /dev/null' > "$LOGS/stand-$n.log" || true
+    log "stand $n collected (log $LOGS/stand-$n.log)"
   done
 }
 
@@ -208,10 +219,9 @@ cmd_down() {
   local count n
   count=$(ips 2> /dev/null | wc -l) || true
   [ "${count:-0}" -gt 0 ] || count=$STANDS
-  terraform -chdir=cloud init -input=false > /dev/null
-  # The variables only have to be valid: destroy works from the state.
-  terraform -chdir=cloud destroy -var stands="$count" \
-    -var ssh_public_key="$(cat "$KEY.pub")" -var ssh_cidr=127.0.0.1/32
+  tf init -input=false > /dev/null
+  # shellcheck disable=SC2046
+  tf destroy $(tf_vars "$count" 127.0.0.1/32) -var ssh_public_key="$(cat "$KEY.pub")"
   for n in $(seq 1 "$count"); do
     git -C "$GITOPS_DIR" push -q origin --delete "lab-$n" 2> /dev/null && log "deleted branch lab-$n" || true
   done
@@ -223,20 +233,20 @@ cmd_down() {
 }
 
 cmd_leftovers() {
-  session
-  aws resourcegroupstaggingapi get-resources --tag-filters Key=project,Values=ai-sre-agent \
-    --query 'ResourceTagMappingList[].ResourceARN' --output text
+  gcloud compute instances list --project "$PROJECT" --filter=labels.project=ai-sre-agent --format='value(name)'
+  gcloud compute disks list --project "$PROJECT" --filter=labels.project=ai-sre-agent --format='value(name)'
+  gcloud compute networks list --project "$PROJECT" --filter=name=ai-sre-stands --format='value(name)'
 }
 
 case "${1:-}" in
-  up | prepare | run | status | collect | down | leftovers)
+  plan | up | prepare | run | status | collect | down | leftovers)
     cmd=$1
     shift
     "cmd_$cmd" "$@"
     ;;
   ssh) on "$2" ;;
   *)
-    sed -n '2,17p' "$0" >&2
+    sed -n '2,20p' "$0" >&2
     exit 2
     ;;
 esac
