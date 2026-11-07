@@ -124,7 +124,8 @@ git -C ai-sre-agent fetch -q origin "$AGENT_REF" && git -C ai-sre-agent checkout
 git -C voting-infra-local pull -q --ff-only
 # The copy, under the name the scenarios and the agent expect (../voting-gitops next to ai-sre-agent).
 # -c applies the deploy key to the clone itself, and keeps it in the clone's config for the scenarios' pushes.
-[ -d voting-gitops ] || git clone -q -c core.sshCommand="ssh -i ~/.ssh/gitops -o IdentitiesOnly=yes" \n  "git@github.com:$GITOPS_REPO.git" voting-gitops
+[ -d voting-gitops ] || git clone -q -c core.sshCommand="ssh -i ~/.ssh/gitops -o IdentitiesOnly=yes" \
+  "git@github.com:$GITOPS_REPO.git" voting-gitops
 git -C voting-gitops config user.name "$GIT_NAME"
 git -C voting-gitops config user.email "$GIT_EMAIL"
 git -C voting-gitops fetch -q origin && git -C voting-gitops checkout -q -B "$GITOPS_BRANCH" "origin/$GITOPS_BRANCH"
