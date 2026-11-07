@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Backtest stands on GCE: each machine runs the laptop's kind stand (voting-infra-local) and one backtest, so
-# ablations and repeats run side by side. Stand N follows its own branch lab-N of voting-gitops, because the
-# scenarios commit their breakages there. Everything long runs in tmux on the machines: the laptop may switch
-# off after `run`. Run from Git Bash in the repository root; see cloud/README.md.
+# ablations and repeats run side by side. The scenarios commit their breakages, so the stands follow a copy of
+# voting-gitops, voting-gitops-backtest (Actions off), never voting-gitops itself; stand N has its branch lab-N
+# there. Everything long runs in tmux on the machines: the laptop may switch off after `run`. Run from Git Bash in
+# the repository root; see cloud/README.md.
 #
 #   cloud/stands.sh plan                 terraform plan into cloud/tfplan (read it)
 #   cloud/stands.sh up                   apply cloud/tfplan, then wait for SSH and cloud-init
-#   cloud/stands.sh prepare [N...]       branch lab-N, .env, deploy key; the stand itself comes up in tmux (~20 min)
+#   cloud/stands.sh prepare [N...]       the copy (created once), lab-N = lab of voting-gitops, deploy key, .env;
+#                                        the stand itself comes up in tmux (~20 min)
 #   cloud/stands.sh run N|all [KEY=value...] ARGS...
 #                                        ai-sre-backtest ARGS in tmux on stand N (or every stand), once it is
 #                                        prepared; KEY=value wins over .env
 #   cloud/stands.sh status               prepare and backtest state of every stand
 #   cloud/stands.sh collect              backtest/results and audit/ of every stand into this checkout
 #   cloud/stands.sh ssh N                a shell on stand N
-#   cloud/stands.sh down                 terraform destroy, then the lab-N branches and the deploy key
+#   cloud/stands.sh down                 terraform destroy, then the lab-N branches and the deploy key of the copy
 #   cloud/stands.sh leftovers            anything labelled ai-sre-agent still in the project
 #
 # Environment: PROJECT (voting-gke-cdzjn), STANDS (3), AGENT_REF (main: the ai-sre-agent revision the stands
@@ -25,10 +27,10 @@ PROJECT=${PROJECT:-voting-gke-cdzjn}
 STANDS=${STANDS:-3}
 AGENT_REF=${AGENT_REF:-main}
 OWNER=anddr13
-GITOPS_REPO=$OWNER/voting-gitops
-GITOPS_DIR=${GITOPS_DIR:-../voting-gitops}
-KEY=$HOME/.ssh/ai-sre-stands             # login to the machines
-GITOPS_KEY=$HOME/.ssh/ai-sre-stands-gitops # deploy key with write access to voting-gitops, removed by down
+GITOPS_REPO=$OWNER/voting-gitops-backtest   # the copy the stands follow and push to
+GITOPS_DIR=${GITOPS_DIR:-../voting-gitops}  # the laptop's clone of the original: the source of lab, read only
+KEY=$HOME/.ssh/ai-sre-stands                # login to the machines
+GITOPS_KEY=$HOME/.ssh/ai-sre-stands-gitops  # deploy key of the copy (write), removed by down
 KNOWN_HOSTS=$HOME/.ssh/ai-sre-stands.known_hosts
 KEY_ID_FILE=cloud/.deploy-key-id
 LOGS=cloud/logs
@@ -47,7 +49,7 @@ tf() { terraform -chdir=cloud "$@"; }
 tf_vars() { # the variables only have to be valid for destroy, which works from the state
   echo -var project_id="$PROJECT" -var stands="$1" -var ssh_cidr="$2"
 }
-ips() { tf output -raw ips; }
+ips() { tf output -raw ips; echo; } # -raw prints no final newline, and wc -l counts newlines
 ip_of() {
   local ip
   ip=$(ips | sed -n "${1}p")
@@ -91,6 +93,7 @@ cmd_up() {
 
 # The deploy key: one for all stands, write access to voting-gitops only.
 deploy_key() {
+  [ "$GITOPS_REPO" != "$OWNER/voting-gitops" ] || { echo "Refusing: the stands never push to voting-gitops." >&2; exit 1; }
   [ -f "$GITOPS_KEY" ] || ssh-keygen -q -t ed25519 -N '' -C ai-sre-stands-gitops -f "$GITOPS_KEY"
   [ -s "$KEY_ID_FILE" ] && return
   "$GH" api "repos/$GITOPS_REPO/keys" -f title=ai-sre-stands -f key="$(cat "$GITOPS_KEY.pub")" -F read_only=false \
@@ -110,7 +113,8 @@ ssh-keyscan -q github.com >> ~/.ssh/known_hosts 2> /dev/null
 git -C ai-sre-agent fetch -q origin "$AGENT_REF" && git -C ai-sre-agent checkout -q --detach FETCH_HEAD
 [ -d voting-infra-local ] || git clone -q "https://github.com/$OWNER/voting-infra-local.git"
 git -C voting-infra-local pull -q --ff-only
-[ -d voting-gitops ] || git clone -q "git@github.com:$OWNER/voting-gitops.git"
+# The copy, under the name the scenarios and the agent expect (../voting-gitops next to ai-sre-agent).
+[ -d voting-gitops ] || git clone -q "git@github.com:$GITOPS_REPO.git" voting-gitops
 git -C voting-gitops config core.sshCommand "ssh -i ~/.ssh/gitops -o IdentitiesOnly=yes"
 git -C voting-gitops config user.name "$GIT_NAME"
 git -C voting-gitops config user.email "$GIT_EMAIL"
@@ -119,7 +123,7 @@ cp ~/agent.env ai-sre-agent/.env
 
 cd ai-sre-agent
 uv sync -q
-GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
+GITOPS_REPO_URL=https://github.com/$GITOPS_REPO.git GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
 export KUBECONFIG=~/.kube/kind-voting-local.yaml
 until kubectl get namespace ai-sre-agent > /dev/null 2>&1; do sleep 10; done
 scripts/agent-secret.sh
@@ -141,7 +145,7 @@ prepare_one() {
   printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$tmp/agent.env"
   # GITOPS_BRANCH is read by the scenario scripts and by the agent's gitops_log tool.
   printf 'export %s\n' "$(printf '%q ' GITOPS_BRANCH="lab-$n" MLFLOW_DISABLE_AGENT_HINT=1 AGENT_REF="$AGENT_REF" \
-    OWNER="$OWNER" GIT_NAME="$(git -C "$GITOPS_DIR" config user.name)" \
+    OWNER="$OWNER" GITOPS_REPO="$GITOPS_REPO" GIT_NAME="$(git -C "$GITOPS_DIR" config user.name)" \
     GIT_EMAIL="$(git -C "$GITOPS_DIR" config user.email)")" > "$tmp/stand.env"
   printf '%s\n' "$PREPARE" > "$tmp/prepare.sh"
   copy_to "$n" "$tmp/agent.env" agent.env
@@ -156,12 +160,20 @@ prepare_one() {
 
 cmd_prepare() {
   [ -f .env ] || { echo "no .env in $(pwd)" >&2; exit 1; }
+  if ! "$GH" repo view "$GITOPS_REPO" > /dev/null 2>&1; then
+    "$GH" repo create "$GITOPS_REPO" --public \
+      --description "Copy of voting-gitops for the ai-sre-agent backtest stands: they commit breakages here"
+    # Its lint workflow would run on every breakage commit.
+    "$GH" api -X PUT "repos/$GITOPS_REPO/actions/permissions" -F enabled=false
+    log "created $GITOPS_REPO (Actions off)"
+  fi
   deploy_key
   git -C "$GITOPS_DIR" fetch -q origin lab
-  local n
+  local n url=https://github.com/$GITOPS_REPO.git
   for n in $(stand_numbers "$@"); do
-    # A fresh lab-N from lab: leftovers of an earlier session's scenarios must not carry over.
-    git -C "$GITOPS_DIR" push -q --force origin "origin/lab:refs/heads/lab-$n"
+    # A fresh lab-N from lab of the original: leftovers of an earlier session's scenarios must not carry over.
+    # Pushed by URL: the remotes of the laptop's clone stay as they are.
+    git -C "$GITOPS_DIR" push -q --force "$url" "origin/lab:refs/heads/lab-$n"
     log "stand $n: lab-$n = lab ($(git -C "$GITOPS_DIR" rev-parse --short origin/lab))"
     prepare_one "$n"
   done
@@ -223,7 +235,8 @@ cmd_down() {
   # shellcheck disable=SC2046
   tf destroy $(tf_vars "$count" 127.0.0.1/32) -var ssh_public_key="$(cat "$KEY.pub")"
   for n in $(seq 1 "$count"); do
-    git -C "$GITOPS_DIR" push -q origin --delete "lab-$n" 2> /dev/null && log "deleted branch lab-$n" || true
+    git -C "$GITOPS_DIR" push -q "https://github.com/$GITOPS_REPO.git" --delete "lab-$n" 2> /dev/null &&
+      log "deleted branch lab-$n of $GITOPS_REPO" || true
   done
   if [ -s "$KEY_ID_FILE" ]; then
     "$GH" api -X DELETE "repos/$GITOPS_REPO/keys/$(cat "$KEY_ID_FILE")" && log "deploy key removed"
