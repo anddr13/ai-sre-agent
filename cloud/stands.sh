@@ -112,9 +112,11 @@ deploy_key() {
 PREPARE=$(
   cat << 'EOF'
 set -euo pipefail
+trap 'echo "FAILED at line $LINENO: $BASH_COMMAND"' ERR
 . ~/stand.env
 chmod 600 ~/.ssh/gitops
-ssh-keyscan -q github.com >> ~/.ssh/known_hosts 2> /dev/null
+# No -q: Ubuntu 24.04's ssh-keyscan (OpenSSH 9.6) does not have it.
+ssh-keyscan github.com >> ~/.ssh/known_hosts 2> /dev/null
 
 [ -d ai-sre-agent ] || git clone -q "https://github.com/$OWNER/ai-sre-agent.git"
 git -C ai-sre-agent fetch -q origin "$AGENT_REF" && git -C ai-sre-agent checkout -q --detach FETCH_HEAD
