@@ -133,8 +133,22 @@ cp ~/agent.env ai-sre-agent/.env
 
 cd ai-sre-agent
 uv sync -q
-GITOPS_REPO_URL=https://github.com/$GITOPS_REPO.git GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
+# The cluster first (up.sh keeps an existing one): two things differ from the laptop before Argo CD starts.
 export KUBECONFIG=~/.kube/kind-voting-local.yaml
+grep -qx voting-local <<< "$(kind get clusters 2> /dev/null)" ||
+  kind create cluster --name voting-local --config ../voting-infra-local/kind.yaml --kubeconfig "$KUBECONFIG"
+# 1. The remediator's Role (ai-sre-agent app, wave 0) lives in namespace voting, which the voting app creates in a
+# later wave: on a fresh cluster that Role fails first, its retries run out and the root app stops syncing.
+kubectl create namespace voting --dry-run=client -o yaml | kubectl apply -f - > /dev/null
+# 2. The agent's image is private on GHCR: build it here and load it into kind.
+image=$(sed -n 's/^ *image: //p' deploy/agent.yaml)
+docker build -q -t "$image" . > /dev/null
+kind load docker-image "$image" --name voting-local
+# A root app that gave up on an earlier attempt syncs again.
+if kubectl -n argocd get application root > /dev/null 2>&1; then
+  kubectl -n argocd patch application root --type merge -p '{"operation":{"sync":{}}}' > /dev/null
+fi
+GITOPS_REPO_URL=https://github.com/$GITOPS_REPO.git GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
 until kubectl get namespace ai-sre-agent > /dev/null 2>&1; do sleep 10; done
 scripts/agent-secret.sh
 echo "waiting for every Argo CD application to be Healthy"
