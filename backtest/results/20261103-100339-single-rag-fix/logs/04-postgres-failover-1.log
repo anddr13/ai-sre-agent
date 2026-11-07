@@ -1,0 +1,15 @@
+
+$ scenarios\04-postgres-failover\break.sh 
+[11:01:04] PostgreSQL cluster ready, primary voting-pg-1
+[11:01:07] k6: 100 votes/s for 15m (container k6-04-postgres-failover)
+[11:01:28] deleted the primary voting-pg-1
+[11:01:28] expected answer: C:/Users/CDZK/gitlab/ai-sre-agent/scenarios/.state/04-postgres-failover.expected.yaml
+[11:01:28] waiting for PostgresPrimaryFailover to be firing (up to 300s)
+[11:02:11] PostgresPrimaryFailover is firing after 43s
+[11:02:12] primary is now none
+
+$ scenarios\04-postgres-failover\restore.sh 
+[11:21:15] k6 stopped
+[11:21:15] PostgreSQL cluster ready, primary voting-pg-2
+[11:21:15] waiting for PostgresPrimaryFailover to be resolved (up to 420s)
+[11:21:16] PostgresPrimaryFailover is not firing after 1s

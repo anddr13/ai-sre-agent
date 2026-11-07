@@ -1,0 +1,22 @@
+
+$ scenarios/08-noise/break.sh 
+[16:00:07] pushed c3f1217: cloudName kind -> kind-lab
+[16:00:07] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/08-noise.expected.yaml
+[16:00:13] voting is Synced and Healthy at c3f1217 (last operation: Succeeded)
+[16:00:13] all Deployments in voting rolled out
+[16:00:14] k6: 2500 votes/s for 60s (container k6-08-noise)
+[16:00:14] waiting for VotingApiLatencyHigh to be firing (up to 240s)
+[16:00:34] VotingApiLatencyHigh is firing after 20s
+
+$ scenarios/apply-fix.sh revert c3f12179d1cb2fc67463cd1787502b655f477b83
+[16:02:34] reverted c3f1217 as f55ab9b
+[16:02:40] voting is Synced and Healthy at f55ab9b (last operation: Succeeded)
+applied revert c3f12179d1cb2fc67463cd1787502b655f477b83 f55ab9b03566aaf5cf99cc16440fc4adbaf61680
+
+$ scenarios/08-noise/restore.sh 
+[16:05:41] k6 stopped
+[16:05:43] pushed revert f55ab9b of c3f1217
+[16:05:43] voting is Synced and Healthy at f55ab9b (last operation: Succeeded)
+[16:05:44] all Deployments in voting rolled out
+[16:05:44] waiting for VotingApiLatencyHigh to be resolved (up to 300s)
+[16:05:44] VotingApiLatencyHigh is not firing after 0s

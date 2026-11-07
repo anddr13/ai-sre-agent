@@ -112,19 +112,44 @@ baseline has not been rerun since.
 Three investigators in parallel, one per class of causes (changes and config; resources and limits; Kafka,
 PostgreSQL, Redis and the network), each with its own budget. Every hypothesis cites its tool calls; one that cites
 no call, or only failed or empty results, is dropped in code. A verifier without tools reads the cited results
-and rejects what they do not show, then ranks the rest (`team.py`). Runs of 2026-11-02/03, RAG on, scored on the
-hypotheses only:
+and rejects what they do not show, then ranks the rest (`team.py`). Investigators are `qwen/qwen3-14b` in both
+team runs. Runs with RAG on and `--apply-fix` (next section), scored on the hypotheses only. The single agent ran
+on the laptop on 2026-11-03, the team runs on the [cloud stands](cloud/README.md) on 2026-11-07: the same kind
+stand, faster machines, so compare the scores rather than the times.
 
-| | Top-1 | Top-3 | Wrong but "high" | Median cost / investigation |
-|---|---|---|---|---|
-| Single agent (above) | 5/8 | 5/8 | 1/8 | $0.0022 |
-| Team, verifier `qwen/qwen3-14b` | 5/8 | 6/8 | 2/8 | $0.0057 |
-| Team, verifier `qwen/qwen3-235b-a22b-2507` | 4/8 | 6/8 | 3/8 | $0.0053 |
+| | Top-1 | Top-3 | Triage | Wrong but "high" | Median alert → answer | Median cost / investigation |
+|---|---|---|---|---|---|---|
+| Single agent, `qwen/qwen3-14b` | 3/8 | 3/8 | 5/8 | 2/8 | 134 s | $0.0020 |
+| Team, verifier `qwen/qwen3-14b` | 5/8 | 6/8 | 4/8 | 0/8 | 125 s | $0.0111 |
+| Team, verifier `qwen/qwen3-235b-a22b-2507` | 6/8 | 6/8 | 7/8 | 2/8 | 58 s | $0.0059 |
 
-**These team runs do not count.** The token of the agent's kubeconfig expired before the first of them, so every
-`k8s_*` call returned Unauthorized: the investigators saw metrics, logs and git, but no events and no pod
-descriptions. The single-agent runs above were not affected (0 failed Kubernetes calls). The backtest now checks
-the agent's tools before every scenario and stops instead; the team runs are to be repeated.
+The team with the larger verifier finds the cause first in 6 of 8 and gets the triage right in 7, and costs about
+3× the single agent. With the 14B verifier it is never wrong with high confidence, but it rates 1 and 3 as
+"morning" and 6 as noise. Both teams miss 6 (replica lag) and 8 (noise: they blame a deploy or Redis). The single
+agent scored 5/8 in the RAG run of 2026-11-02 and 3/8 here: one run each is not enough, the repeats come with the
+ablations.
+
+Earlier team runs (2026-11-02/03) are discarded: the token of the agent's kubeconfig had expired, so every `k8s_*`
+call returned Unauthorized. The backtest now checks the agent's tools before every scenario and stops instead.
+
+### Applying the fix (`--apply-fix`)
+
+The answer names one action from an allowlist: revert a recent commit of voting-gitops (lab), restart one pod in
+namespace voting, or none. `scenarios/apply-fix.sh` applies it: a git revert and an Argo CD sync, or a pod delete
+as the ServiceAccount `ai-sre-remediator` (`deploy/remediator.yaml`: get and delete pods in voting, nothing
+else). The agent itself still has no write access. Recovered means the scenario's alert no longer fires and the
+voting logs have at most 20 error lines in 5 minutes, within 15 minutes of the fix. A wrong revert is reverted
+again before `restore.sh`.
+
+| | Recovered | Median alert → recovery | Fixed by the action (scenarios) |
+|---|---|---|---|
+| Single agent | 5/8 | 488 s | 1, 2, 6, 7 |
+| Team, verifier 14B | 5/8 | 311 s | 1, 2, 5 |
+| Team, verifier 235B | 7/8 | 382 s | 1, 2, 3, 5, 7 |
+
+"Recovered" is not always the fix's merit: 4 (failover) and 8 (noise) recover by themselves, so any harmless
+action passes there. On 8 the 235B team named a pod that does not exist; the fix was rejected and the stand
+recovered anyway. The last column counts only the scenarios where the action did the work.
 
 ## MLflow
 
@@ -146,4 +171,8 @@ pgvector; separate from voting-pg, which the scenarios break). With `MLFLOW_TRAC
 - [x] The agent: Alertmanager webhook → investigation → Slack, redaction, audit, limits
 - [x] Backtest runner + rule baseline, first table
 - [x] The agent's PostgreSQL (pgvector) + MLflow tracking and tracing
-- [ ] RAG over the runbooks, investigators + verifier, apply-fix + time to recovery, ablations, vLLM
+- [x] RAG over the runbooks
+- [x] Investigators + verifier
+- [x] Apply the agent's fix + time to recovery
+- [x] Backtest stands on GCE, several runs side by side (`cloud/`)
+- [ ] Ablations with repeats, MLflow registry, vLLM
