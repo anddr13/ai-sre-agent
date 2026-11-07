@@ -21,3 +21,8 @@ cloud/terraform.tfstate*
 cloud/tfplan
 cloud/logs/
 cloud/.deploy-key-id
+
+# ai-sre-mlflow: the lasting MLflow of the backtests on the laptop
+mlflow.db
+mlartifacts/
+mlruns/

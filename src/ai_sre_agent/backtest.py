@@ -413,12 +413,15 @@ async def main_async(args: argparse.Namespace) -> None:
     scenarios = [s for s in ALL if any(s.startswith(p) for p in args.scenarios.split(","))] if args.scenarios else ALL
     out = RESULTS_DIR / f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{args.label}"
     out.mkdir(parents=True, exist_ok=True)
+    params = _params(args, scenarios, settings)
+    # Also on disk: a cloud stand's MLflow goes away with the machine, `ai-sre-mlflow import` logs the run again.
+    (out / "params.json").write_text(json.dumps({"label": args.label, **params}, indent=2) + "\n", encoding="utf-8")
     stand = Stand(settings)
     tracking.setup(settings.mlflow_tracking_uri, "ai-sre-backtest")
     silence = None if args.no_silence else await stand.silence(hours=6)
     results: list[Result] = []
     try:
-        with tracking.run(args.label, _params(args, scenarios, settings)):
+        with tracking.run(args.label, params):
             for run in range(1, args.runs + 1):
                 for name in scenarios:
                     print(f"{name} #{run} ...", flush=True)

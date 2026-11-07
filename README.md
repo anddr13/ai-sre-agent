@@ -161,6 +161,14 @@ pgvector; separate from voting-pg, which the scenarios break). With `MLFLOW_TRAC
 - an investigation is a trace: every LLM turn and every tool call as spans, with the redacted text the model saw;
   the agent in the cluster traces the real alerts into the experiment `ai-sre-agent`.
 
+The [cloud stands](cloud/README.md) have an MLflow each, which goes away with the machine. Every result directory
+therefore has a `params.json` too, and `uv run ai-sre-mlflow import` logs the collected backtests again into a
+lasting MLflow on the laptop (SQLite, `mlflow.db`, not in git; `uv run mlflow ui --backend-store-uri
+sqlite:///mlflow.db`). The traces stay in each run's `audit/`. `ai-sre-mlflow compare --label-prefix abl-` puts
+the repeats of each configuration side by side. `ai-sre-mlflow register` puts the prompts of the best one into
+MLflow's Prompt Registry under the alias `best`, with the model, the verifier and the mean scores as tags; it
+refuses when the prompt has changed since those runs.
+
 ## Status
 
 - [x] Stand: kind + Prometheus, Alertmanager, Grafana, Loki

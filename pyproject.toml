@@ -24,9 +24,13 @@ ai-sre-agent = "ai_sre_agent.service:main"
 ai-sre-investigate = "ai_sre_agent.cli:main"
 ai-sre-backtest = "ai_sre_agent.backtest:main"
 ai-sre-rag = "ai_sre_agent.rag:main"
+ai-sre-mlflow = "ai_sre_agent.registry:main"
 
 [dependency-groups]
 dev = [
+    # The full MLflow on the laptop only (the image keeps mlflow-skinny): the SQLite store that
+    # `ai-sre-mlflow` imports the cloud stands' backtests into, the Prompt Registry, `mlflow ui`.
+    "mlflow>=3.16,<3.17",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1",
     "ruff>=0.17.3",
