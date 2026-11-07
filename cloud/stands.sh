@@ -34,7 +34,8 @@ PROJECT=${PROJECT:-voting-gke-cdzjn}
 STANDS=${STANDS:-3}
 AGENT_REF=${AGENT_REF:-main}
 OWNER=anddr13
-GITOPS_REPO=$OWNER/voting-gitops-backtest   # the copy the stands follow and push to
+# Not GITOPS_REPO: the agent reads that as the path of its voting-gitops clone.
+GITOPS_COPY=$OWNER/voting-gitops-backtest   # the copy the stands follow and push to
 GITOPS_DIR=${GITOPS_DIR:-../voting-gitops}  # the laptop's clone of the original: the source of lab, read only
 KEY=$HOME/.ssh/ai-sre-stands                # login to the machines
 GITOPS_KEY=$HOME/.ssh/ai-sre-stands-gitops  # deploy key of the copy (write), removed by down
@@ -100,12 +101,12 @@ cmd_up() {
 
 # The deploy key: one for all stands, write access to voting-gitops only.
 deploy_key() {
-  [ "$GITOPS_REPO" != "$OWNER/voting-gitops" ] || { echo "Refusing: the stands never push to voting-gitops." >&2; exit 1; }
+  [ "$GITOPS_COPY" != "$OWNER/voting-gitops" ] || { echo "Refusing: the stands never push to voting-gitops." >&2; exit 1; }
   [ -f "$GITOPS_KEY" ] || ssh-keygen -q -t ed25519 -N '' -C ai-sre-stands-gitops -f "$GITOPS_KEY"
   [ -s "$KEY_ID_FILE" ] && return
-  "$GH" api "repos/$GITOPS_REPO/keys" -f title=ai-sre-stands -f key="$(cat "$GITOPS_KEY.pub")" -F read_only=false \
+  "$GH" api "repos/$GITOPS_COPY/keys" -f title=ai-sre-stands -f key="$(cat "$GITOPS_KEY.pub")" -F read_only=false \
     --jq .id > "$KEY_ID_FILE"
-  log "deploy key $(cat "$KEY_ID_FILE") added to $GITOPS_REPO"
+  log "deploy key $(cat "$KEY_ID_FILE") added to $GITOPS_COPY"
 }
 
 # Runs on the machine, in tmux: brings the stand up from the repositories. Settings come from ~/stand.env.
@@ -125,7 +126,7 @@ git -C voting-infra-local pull -q --ff-only
 # The copy, under the name the scenarios and the agent expect (../voting-gitops next to ai-sre-agent).
 # -c applies the deploy key to the clone itself, and keeps it in the clone's config for the scenarios' pushes.
 [ -d voting-gitops ] || git clone -q -c core.sshCommand="ssh -i ~/.ssh/gitops -o IdentitiesOnly=yes" \
-  "git@github.com:$GITOPS_REPO.git" voting-gitops
+  "git@github.com:$GITOPS_COPY.git" voting-gitops
 git -C voting-gitops config user.name "$GIT_NAME"
 git -C voting-gitops config user.email "$GIT_EMAIL"
 git -C voting-gitops fetch -q origin && git -C voting-gitops checkout -q -B "$GITOPS_BRANCH" "origin/$GITOPS_BRANCH"
@@ -140,7 +141,11 @@ grep -qx voting-local <<< "$(kind get clusters 2> /dev/null)" ||
 # 1. The remediator's Role (ai-sre-agent app, wave 0) lives in namespace voting, which the voting app creates in a
 # later wave: on a fresh cluster that Role fails first, its retries run out and the root app stops syncing.
 kubectl create namespace voting --dry-run=client -o yaml | kubectl apply -f - > /dev/null
-# 2. The agent's image is private on GHCR: build it here and load it into kind. BuildKit (cache mounts) comes with
+# 2. The agent's Deployment (wave 0 as well) needs the Secret ai-sre-agent-env: without it the pod never starts, the
+# ai-sre-agent app stays Degraded and the root app never gets past wave 0 (the laptop has had the Secret for long).
+kubectl create namespace ai-sre-agent --dry-run=client -o yaml | kubectl apply -f - > /dev/null
+scripts/agent-secret.sh
+# 3. The agent's image is private on GHCR: build it here and load it into kind. BuildKit (cache mounts) comes with
 # docker-buildx, which cloud-init installs; machines created before that get it here.
 docker buildx version > /dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-buildx > /dev/null
 image=$(sed -n 's/^ *image: //p' deploy/agent.yaml)
@@ -150,9 +155,7 @@ kind load docker-image "$image" --name voting-local
 if kubectl -n argocd get application root > /dev/null 2>&1; then
   kubectl -n argocd patch application root --type merge -p '{"operation":{"sync":{}}}' > /dev/null
 fi
-GITOPS_REPO_URL=https://github.com/$GITOPS_REPO.git GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
-until kubectl get namespace ai-sre-agent > /dev/null 2>&1; do sleep 10; done
-scripts/agent-secret.sh
+GITOPS_REPO_URL=https://github.com/$GITOPS_COPY.git GITOPS_REVISION=$GITOPS_BRANCH ../voting-infra-local/scripts/up.sh
 echo "waiting for every Argo CD application to be Healthy"
 kubectl -n argocd wait application --all --for=jsonpath='{.status.health.status}'=Healthy --timeout=20m > /dev/null
 TOKEN_TTL=96h scripts/agent-kubeconfig.sh
@@ -171,7 +174,7 @@ prepare_one() {
   printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$tmp/agent.env"
   # GITOPS_BRANCH is read by the scenario scripts and by the agent's gitops_log tool.
   printf 'export %s\n' "$(printf '%q ' GITOPS_BRANCH="lab-$n" MLFLOW_DISABLE_AGENT_HINT=1 AGENT_REF="$AGENT_REF" \
-    OWNER="$OWNER" GITOPS_REPO="$GITOPS_REPO" GIT_NAME="$(git -C "$GITOPS_DIR" config user.name)" \
+    OWNER="$OWNER" GITOPS_COPY="$GITOPS_COPY" GIT_NAME="$(git -C "$GITOPS_DIR" config user.name)" \
     GIT_EMAIL="$(git -C "$GITOPS_DIR" config user.email)")" > "$tmp/stand.env"
   printf '%s\n' "$PREPARE" > "$tmp/prepare.sh"
   copy_to "$n" "$tmp/agent.env" agent.env
@@ -186,16 +189,16 @@ prepare_one() {
 
 cmd_prepare() {
   [ -f .env ] || { echo "no .env in $(pwd)" >&2; exit 1; }
-  if ! "$GH" repo view "$GITOPS_REPO" > /dev/null 2>&1; then
-    "$GH" repo create "$GITOPS_REPO" --public \
+  if ! "$GH" repo view "$GITOPS_COPY" > /dev/null 2>&1; then
+    "$GH" repo create "$GITOPS_COPY" --public \
       --description "Copy of voting-gitops for the ai-sre-agent backtest stands: they commit breakages here"
     # Its lint workflow would run on every breakage commit.
-    "$GH" api -X PUT "repos/$GITOPS_REPO/actions/permissions" -F enabled=false
-    log "created $GITOPS_REPO (Actions off)"
+    "$GH" api -X PUT "repos/$GITOPS_COPY/actions/permissions" -F enabled=false
+    log "created $GITOPS_COPY (Actions off)"
   fi
   deploy_key
   git -C "$GITOPS_DIR" fetch -q origin lab
-  local n url=https://github.com/$GITOPS_REPO.git
+  local n url=https://github.com/$GITOPS_COPY.git
   for n in $(stand_numbers "$@"); do
     # A fresh lab-N from lab of the original: leftovers of an earlier session's scenarios must not carry over.
     # Pushed by URL: the remotes of the laptop's clone stay as they are.
@@ -262,11 +265,11 @@ cmd_down() {
   # shellcheck disable=SC2046
   tf destroy $(tf_vars "$count" 127.0.0.1/32) -var ssh_public_key="$(cat "$KEY.pub")"
   for n in $(seq 1 "$count"); do
-    git -C "$GITOPS_DIR" push -q "https://github.com/$GITOPS_REPO.git" --delete "lab-$n" 2> /dev/null &&
-      log "deleted branch lab-$n of $GITOPS_REPO" || true
+    git -C "$GITOPS_DIR" push -q "https://github.com/$GITOPS_COPY.git" --delete "lab-$n" 2> /dev/null &&
+      log "deleted branch lab-$n of $GITOPS_COPY" || true
   done
   if [ -s "$KEY_ID_FILE" ]; then
-    "$GH" api -X DELETE "repos/$GITOPS_REPO/keys/$(cat "$KEY_ID_FILE")" && log "deploy key removed"
+    "$GH" api -X DELETE "repos/$GITOPS_COPY/keys/$(cat "$KEY_ID_FILE")" && log "deploy key removed"
     rm -f "$KEY_ID_FILE"
   fi
   rm -f "$KNOWN_HOSTS"
