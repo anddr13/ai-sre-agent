@@ -21,6 +21,13 @@
 # Environment: PROJECT (voting-gke-cdzjn), STANDS (3), AGENT_REF (main: the ai-sre-agent revision the stands
 # check out; push first), GH (gh).
 set -euo pipefail
+
+# From WSL: run again in Git Bash. gcloud, gh, terraform (with its Windows provider) and the stands' SSH key all
+# live on the Windows side. WSLENV hands the settings above over to it.
+if grep -qi microsoft /proc/version 2> /dev/null; then
+  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:${WSLENV:-}
+  exec "/mnt/c/Program Files/Git/bin/bash.exe" "$(wslpath -w "$(realpath "$0")")" "$@"
+fi
 cd "$(dirname "$0")/.."
 
 PROJECT=${PROJECT:-voting-gke-cdzjn}
@@ -208,9 +215,10 @@ EOF
 cmd_status() {
   local n
   for n in $(stand_numbers); do
-    on "$n" 'p=$( [ -f ~/prepare.exit ] && echo "exit $(cat ~/prepare.exit)" || echo running);
+    on "$n" 'if [ -f ~/prepare.exit ]; then p="exit $(cat ~/prepare.exit)";
+      elif [ -f ~/prepare.log ]; then p=running; else p="not started"; fi
       b=$(tmux has-session -t bt 2> /dev/null && echo running || echo idle);
-      echo "--- prepare: $p, backtest: $b"; tail -n 2 ~/prepare.log 2> /dev/null; tail -n 4 ~/backtest.log 2> /dev/null' |
+      echo "--- prepare: $p, backtest: $b"; tail -n 2 ~/prepare.log 2> /dev/null; tail -n 4 ~/backtest.log 2> /dev/null; true' |
       sed "1s/^---/--- stand $n/" || echo "--- stand $n: no answer"
   done
 }
