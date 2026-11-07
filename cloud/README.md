@@ -44,13 +44,16 @@ cloud/stands.sh prepare            # starts each stand coming up in tmux on its 
 cloud/stands.sh run 1 --agent team --apply-fix --label team-a      # waits for the stand, then runs
 cloud/stands.sh run 2 VERIFIER_MODEL= --agent team --apply-fix --label team-b
 cloud/stands.sh run all --label repeat   # the same backtest on every stand
+cloud/stands.sh run 1 --no-rag --apply-fix --label team-c   # queued: runs once team-a is done
 # the laptop may switch off now
 cloud/stands.sh status
 cloud/stands.sh collect            # backtest/results/ and audit/ of every stand into this checkout
+uv run ai-sre-mlflow import        # and into the laptop's MLflow (the stands' own go away with them)
 cloud/stands.sh down               # always: nothing destroys the machines on its own
 cloud/stands.sh leftovers          # should print nothing
 ```
 
 `KEY=value` arguments before the backtest's flags are settings for that run and win over `.env`.
 `cloud/stands.sh ssh N` opens a shell on stand N. There, tmux session `prepare` brings the stand up
-(`~/prepare.log`), `bt` runs the backtest (`~/backtest.log`) and `db` holds the agent-db port-forward.
+(`~/prepare.log`), `bt` runs the queued backtests (`~/queue`, log `~/backtest.log`) and `db` holds the agent-db
+port-forward.

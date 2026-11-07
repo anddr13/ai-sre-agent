@@ -9,7 +9,7 @@
 #   cloud/stands.sh up                   apply cloud/tfplan, then wait for SSH and cloud-init
 #   cloud/stands.sh prepare [N...]       the copy (created once), lab-N = lab of voting-gitops, deploy key, .env;
 #                                        the stand itself comes up in tmux (~20 min)
-#   cloud/stands.sh run N|all [KEY=value...] ARGS...
+#   cloud/stands.sh run N|all [KEY=value...] ARGS...   (queued: several runs per stand go one after another)
 #                                        ai-sre-backtest ARGS in tmux on stand N (or every stand), once it is
 #                                        prepared; KEY=value wins over .env
 #   cloud/stands.sh status               prepare and backtest state of every stand
@@ -217,22 +217,30 @@ cmd_run() {
     env+=("$1")
     shift
   done
-  printf -v args '%q ' "$@"
+  # One line of ~/queue, quoted for the eval in WORKER (the files avoid two more layers of quoting: ssh, tmux).
+  printf -v args '%q ' env "${env[@]}" .venv/bin/ai-sre-backtest "$@"
   for n in $( [ "$target" = all ] && stand_numbers || echo "$target"); do
-    on "$n" tmux has-session -t bt 2> /dev/null && { echo "stand $n: a backtest is still running" >&2; exit 1; }
-    # The command goes into a file rather than through two more layers of quoting (ssh, then tmux).
-    on "$n" 'cat > ~/run.sh' << EOF
-until [ -f ~/prepare.exit ]; do sleep 30; done
-[ "\$(cat ~/prepare.exit)" = 0 ] || { echo "the stand did not come up, see ~/prepare.log"; exit 1; }
-cd ~/ai-sre-agent && . ~/stand.env
-${env[*]:+export $(printf '%q ' "${env[@]}")}
-echo "=== \$(date -u +%FT%TZ) ${env[*]} ai-sre-backtest $args"
-.venv/bin/ai-sre-backtest $args 2>&1 | grep --line-buffered -v 'HTTP Request'
-EOF
-    on "$n" "tmux new-session -d -s bt 'bash ~/run.sh >> ~/backtest.log 2>&1'"
-    log "stand $n: ai-sre-backtest $args"
+    printf '%s\n' "$args" | on "$n" 'cat >> ~/queue'
+    printf '%s\n' "$WORKER" | on "$n" 'cat > ~/worker.sh'
+    on "$n" "tmux has-session -t bt 2> /dev/null || tmux new-session -d -s bt 'bash ~/worker.sh >> ~/backtest.log 2>&1'"
+    log "stand $n: queued $args($(on "$n" 'wc -l < ~/queue') waiting)"
   done
 }
+
+# Runs on the machine in tmux session bt: once the stand is prepared, the queued backtests one after another.
+WORKER=$(
+  cat << 'EOF'
+until [ -f ~/prepare.exit ]; do sleep 30; done
+[ "$(cat ~/prepare.exit)" = 0 ] || { echo "the stand did not come up, see ~/prepare.log"; exit 1; }
+cd ~/ai-sre-agent && . ~/stand.env
+while [ -s ~/queue ]; do
+  line=$(head -n 1 ~/queue)
+  sed -i 1d ~/queue
+  echo "=== $(date -u +%FT%TZ) $line"
+  eval "$line" 2>&1 | grep --line-buffered -v 'HTTP Request'
+done
+EOF
+)
 
 cmd_status() {
   local n
@@ -240,7 +248,8 @@ cmd_status() {
     on "$n" 'if [ -f ~/prepare.exit ]; then p="exit $(cat ~/prepare.exit)";
       elif [ -f ~/prepare.log ]; then p=running; else p="not started"; fi
       b=$(tmux has-session -t bt 2> /dev/null && echo running || echo idle);
-      echo "--- prepare: $p, backtest: $b"; tail -n 2 ~/prepare.log 2> /dev/null; tail -n 4 ~/backtest.log 2> /dev/null; true' |
+      q=$(cat ~/queue 2> /dev/null | wc -l)
+      echo "--- prepare: $p, backtest: $b, $q queued"; tail -n 2 ~/prepare.log 2> /dev/null; tail -n 4 ~/backtest.log 2> /dev/null; true' |
       sed "1s/^---/--- stand $n/" || echo "--- stand $n: no answer"
   done
 }
@@ -291,7 +300,7 @@ case "${1:-}" in
     ;;
   ssh) on "$2" ;;
   *)
-    sed -n '2,20p' "$0" >&2
+    sed -n '2,22p' "$0" >&2
     exit 2
     ;;
 esac
