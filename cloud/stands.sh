@@ -140,7 +140,9 @@ grep -qx voting-local <<< "$(kind get clusters 2> /dev/null)" ||
 # 1. The remediator's Role (ai-sre-agent app, wave 0) lives in namespace voting, which the voting app creates in a
 # later wave: on a fresh cluster that Role fails first, its retries run out and the root app stops syncing.
 kubectl create namespace voting --dry-run=client -o yaml | kubectl apply -f - > /dev/null
-# 2. The agent's image is private on GHCR: build it here and load it into kind.
+# 2. The agent's image is private on GHCR: build it here and load it into kind. BuildKit (cache mounts) comes with
+# docker-buildx, which cloud-init installs; machines created before that get it here.
+docker buildx version > /dev/null 2>&1 || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-buildx > /dev/null
 image=$(sed -n 's/^ *image: //p' deploy/agent.yaml)
 docker build -q -t "$image" . > /dev/null
 kind load docker-image "$image" --name voting-local

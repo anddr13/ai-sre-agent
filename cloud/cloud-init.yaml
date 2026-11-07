@@ -2,7 +2,8 @@
 # The tools of the laptop stand, at the laptop's versions: Docker, kind, kubectl, helm, uv. stands.sh waits for
 # `cloud-init status --wait`, then clones the repositories and brings the stand up as the ubuntu user.
 package_update: true
-packages: [docker.io, git, jq, curl, tmux, rsync]
+# docker-buildx: the agent's Dockerfile needs BuildKit (cache mounts); Ubuntu's docker.io builds without it.
+packages: [docker.io, docker-buildx, git, jq, curl, tmux, rsync]
 
 write_files:
   # kind's known limits: with ~80 pods on one node the defaults run out of inotify instances.
