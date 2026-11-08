@@ -14,6 +14,7 @@
 #                                        prepared; KEY=value wins over .env
 #   cloud/stands.sh status               prepare and backtest state of every stand
 #   cloud/stands.sh collect              backtest/results and audit/ of every stand into this checkout
+#   cloud/stands.sh wake                 start the machines that powered off an hour after their queue was done
 #   cloud/stands.sh ssh N                a shell on stand N
 #   cloud/stands.sh down                 terraform destroy, then the lab-N branches and the deploy key of the copy
 #   cloud/stands.sh leftovers            anything labelled ai-sre-agent still in the project
@@ -221,8 +222,12 @@ cmd_run() {
   printf -v args '%q ' env "${env[@]}" .venv/bin/ai-sre-backtest "$@"
   for n in $( [ "$target" = all ] && stand_numbers || echo "$target"); do
     printf '%s\n' "$args" | on "$n" 'cat >> ~/queue'
-    printf '%s\n' "$WORKER" | on "$n" 'cat > ~/worker.sh'
-    on "$n" "tmux has-session -t bt 2> /dev/null || tmux new-session -d -s bt 'bash ~/worker.sh >> ~/backtest.log 2>&1'"
+    # worker.sh only when no worker runs: bash reads a running script as it goes, a rewrite would break it.
+    if ! on "$n" tmux has-session -t bt 2> /dev/null; then
+      printf '%s\n' "$WORKER" | on "$n" 'cat > ~/worker.sh'
+      on "$n" "tmux new-session -d -s bt 'bash ~/worker.sh >> ~/backtest.log 2>&1'"
+    fi
+    idle_shutdown "$n"
     log "stand $n: queued $args($(on "$n" 'wc -l < ~/queue') waiting)"
   done
 }
@@ -286,6 +291,29 @@ cmd_down() {
   rm -f "$KNOWN_HOSTS"
 }
 
+# Once the queue of stand N is done, the machine powers off an hour later (time for `collect`): a stopped machine
+# costs its disk only. `wake` starts it again.
+idle_shutdown() {
+  on "$1" "tmux has-session -t idle 2> /dev/null ||
+    tmux new-session -d -s idle 'while tmux has-session -t bt; do sleep 60; done; sudo shutdown -h +60'"
+}
+
+cmd_wake() {
+  session
+  local names
+  names=$(gcloud compute instances list --project "$PROJECT" --filter="labels.project=ai-sre-agent AND status=TERMINATED" \
+    --format='value(name)' | tr '\n' ' ')
+  [ -n "$names" ] || { log "nothing to wake"; return; }
+  # shellcheck disable=SC2086 # one argument per name
+  gcloud compute instances start $names --project "$PROJECT" --zone europe-central2-a
+  # Ephemeral IPs change on a start: read them again into the state.
+  # shellcheck disable=SC2046
+  tf apply -refresh-only -auto-approve $(tf_vars "$(ips | wc -l)" "$(curl -fsS https://checkip.amazonaws.com)/32") \
+    -var ssh_public_key="$(cat "$KEY.pub")" > /dev/null
+  rm -f "$KNOWN_HOSTS"
+  log "woke $names: cloud/stands.sh collect"
+}
+
 cmd_leftovers() {
   gcloud compute instances list --project "$PROJECT" --filter=labels.project=ai-sre-agent --format='value(name)'
   gcloud compute disks list --project "$PROJECT" --filter=labels.project=ai-sre-agent --format='value(name)'
@@ -293,14 +321,14 @@ cmd_leftovers() {
 }
 
 case "${1:-}" in
-  plan | up | prepare | run | status | collect | down | leftovers)
+  plan | up | prepare | run | status | collect | wake | down | leftovers)
     cmd=$1
     shift
     "cmd_$cmd" "$@"
     ;;
   ssh) on "$2" ;;
   *)
-    sed -n '2,22p' "$0" >&2
+    sed -n '2,23p' "$0" >&2
     exit 2
     ;;
 esac
