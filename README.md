@@ -151,6 +151,44 @@ again before `restore.sh`.
 action passes there. On 8 the 235B team named a pod that does not exist; the fix was rejected and the stand
 recovered anyway. The last column counts only the scenarios where the action did the work.
 
+### Ablations (2026-11-08)
+
+Single agent against the team (verifier `qwen/qwen3-235b-a22b-2507`), with and without RAG, all with
+`--apply-fix`, 3 runs each: 12 backtests on 3 [cloud stands](cloud/README.md), labels `abl-*`. Mean per run of
+8 scenarios (`uv run ai-sre-mlflow compare --label-prefix abl-`):
+
+| | Top-1 (runs) | Top-3 | Triage | Wrong but "high" | Recovered | Median investigation | Median cost |
+|---|---|---|---|---|---|---|---|
+| Team + RAG | 5.33 (5, 6, 5) | 5.67 | 6.67 | 1.67 | 5.00 | 77 s | $0.0119 |
+| Single + RAG | 5.00 (4, 5, 6) | 5.33 | 6.33 | 1.67 | 6.00 | 27 s | $0.0021 |
+| Team, no RAG | 3.67 (3, 4, 4) | 4.00 | 7.00 | 1.33 | 5.33 | 65 s | $0.0081 |
+| Single, no RAG | 3.33 (4, 3, 3) | 4.00 | 6.00 | 2.67 | 5.33 | 28 s | $0.0014 |
+
+Top-1 per scenario, out of 3 runs:
+
+| | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| Team + RAG | 3 | 3 | 1 | 2 | 3 | 1 | 3 | 0 |
+| Single + RAG | 3 | 3 | 2 | 3 | 2 | 0 | 2 | 0 |
+| Team, no RAG | 3 | 1 | 1 | 0 | 3 | 0 | 3 | 0 |
+| Single, no RAG | 3 | 1 | 1 | 0 | 2 | 0 | 3 | 0 |
+
+- **RAG is what matters**: +1.5 top-1 per run for both agents. Without the runbooks nobody ever gets 4 (the
+  failover), and 2 (the config change) only once in 3.
+- **The team adds little on top of RAG**: +0.33 top-1, at 5.7× the cost and 3× the time. Its run-to-run spread
+  (5-6) is smaller than the single agent's (4-6). It is wrong with high confidence less often only without RAG
+  (1.33 against 2.67); with RAG both are at 1.67.
+- **Nobody solves 8** (noise) and 6 (replica lag) falls once in 12 runs: these need a different prompt or tool,
+  not a different configuration.
+- Recovery does not follow top-1: 4 and 8 recover by themselves (see above).
+
+The best configuration by top-1, then fewer sure-wrong answers, is the team with RAG. `ai-sre-mlflow register`
+put its prompts into the Prompt Registry as `ai-sre-investigator` v1 and `ai-sre-verifier` v1, alias `best`. The
+single agent with RAG is the cheap choice at almost the same accuracy.
+
+In 3 investigations the model passed two paths joined by a comma to `gitops_log`. The tool rejected them, and
+the model went on without that call.
+
 ## MLflow
 
 MLflow runs in the cluster (`mlflow.localhost:8090`) on the agent's own PostgreSQL (`deploy/db.yaml`: CNPG,
@@ -183,4 +221,5 @@ refuses when the prompt has changed since those runs.
 - [x] Investigators + verifier
 - [x] Apply the agent's fix + time to recovery
 - [x] Backtest stands on GCE, several runs side by side (`cloud/`)
-- [ ] Ablations with repeats, MLflow registry, vLLM
+- [x] Ablations with repeats (single/team × RAG/no RAG), MLflow Prompt Registry
+- [ ] vLLM on a GPU (7B against 14B)
