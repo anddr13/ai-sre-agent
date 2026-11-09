@@ -302,8 +302,8 @@ cmd_wake() {
   session
   local names
   names=$(gcloud compute instances list --project "$PROJECT" --filter="labels.project=ai-sre-agent AND status=TERMINATED" \
-    --format='value(name)' | tr '\n' ' ')
-  [ -n "$names" ] || { log "nothing to wake"; return; }
+    --format='value(name)' | tr -s '\r\n' ' ') # gcloud on Windows ends its lines with CRLF
+  [ -n "${names// /}" ] || { log "nothing to wake"; return; }
   # shellcheck disable=SC2086 # one argument per name
   gcloud compute instances start $names --project "$PROJECT" --zone europe-central2-a
   # Ephemeral IPs change on a start: read them again into the state.
