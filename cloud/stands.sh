@@ -20,13 +20,14 @@
 #   cloud/stands.sh leftovers            anything labelled ai-sre-agent still in the project
 #
 # Environment: PROJECT (voting-gke-cdzjn), STANDS (3), AGENT_REF (main: the ai-sre-agent revision the stands
-# check out; push first), GH (gh).
+# check out; push first), GH (gh), LLM_ENV (for prepare: a file whose LLM_* settings win over .env, so an API key
+# never goes through the run queue and its log).
 set -euo pipefail
 
 # From WSL: run again in Git Bash. gcloud, gh, terraform (with its Windows provider) and the stands' SSH key all
 # live on the Windows side. WSLENV hands the settings above over to it.
 if grep -qi microsoft /proc/version 2> /dev/null; then
-  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:${WSLENV:-}
+  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:LLM_ENV/p:${WSLENV:-}
   exec "/mnt/c/Program Files/Git/bin/bash.exe" "$(wslpath -w "$(realpath "$0")")" "$@"
 fi
 cd "$(dirname "$0")/.."
@@ -171,7 +172,10 @@ EOF
 prepare_one() {
   local n=$1 tmp
   tmp=$(mktemp -d)
-  for key in "${ENV_KEYS[@]}"; do grep -E "^$key=" .env | tail -1 >> "$tmp/agent.env" || true; done
+  # A key in LLM_ENV (e.g. the vLLM endpoint written by gpu-inference-platform's `make agent-vllm`) wins over .env.
+  for key in "${ENV_KEYS[@]}"; do
+    { [ -n "${LLM_ENV:-}" ] && grep -E "^$key=" "$LLM_ENV" || grep -E "^$key=" .env; } | tail -1 >> "$tmp/agent.env" || true
+  done
   printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$tmp/agent.env"
   # GITOPS_BRANCH is read by the scenario scripts and by the agent's gitops_log tool.
   printf 'export %s\n' "$(printf '%q ' GITOPS_BRANCH="lab-$n" MLFLOW_DISABLE_AGENT_HINT=1 AGENT_REF="$AGENT_REF" \

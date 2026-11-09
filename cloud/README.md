@@ -53,7 +53,11 @@ cloud/stands.sh down               # always: nothing destroys the machines on it
 cloud/stands.sh leftovers          # should print nothing
 ```
 
-`KEY=value` arguments before the backtest's flags are settings for that run and win over `.env`.
+`KEY=value` arguments before the backtest's flags are settings for that run and win over `.env`. They are
+written to the queue and the log, so an API key goes through `LLM_ENV` instead: `LLM_ENV=<file> cloud/stands.sh
+prepare` takes `LLM_*` from that file over `.env`, e.g. the self-hosted vLLM that
+[gpu-inference-platform](https://github.com/anddr13/gpu-inference-platform)'s `make agent-vllm` writes into
+`.agent-vllm.env`.
 `cloud/stands.sh ssh N` opens a shell on stand N. There, tmux session `prepare` brings the stand up
 (`~/prepare.log`), `bt` runs the queued backtests (`~/queue`, log `~/backtest.log`) and `db` holds the agent-db
 port-forward.
