@@ -1,7 +1,7 @@
 """git log of the GitOps repository: what changed in the desired state, when, and by whom.
 
 git runs as a subprocess with a fixed argument list (no shell); the only inputs from the model are a
-validated duration, a validated path and numbers.
+validated duration, validated paths and numbers.
 """
 
 import asyncio
@@ -36,7 +36,7 @@ async def gitops_log(
     repo: str,
     branch: str,
     since: timedelta,
-    path: str | None,
+    paths: list[str],
     max_count: int,
     with_diff: bool,
     timeout_s: float,
@@ -59,8 +59,8 @@ async def gitops_log(
         f"--format={RECORD}%H{FIELD}%an{FIELD}%aI{FIELD}%s",
         "--name-only",
     ]
-    if path:
-        args += ["--", path]
+    if paths:
+        args += ["--", *paths]  # commits touching any of them
     out = await _git(repo, *args, timeout_s=timeout_s)
 
     commits = []

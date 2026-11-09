@@ -187,7 +187,7 @@ put its prompts into the Prompt Registry as `ai-sre-investigator` v1 and `ai-sre
 single agent with RAG is the cheap choice at almost the same accuracy.
 
 In 3 investigations the model passed two paths joined by a comma to `gitops_log`. The tool rejected them, and
-the model went on without that call.
+the model went on without that call. `gitops_log` now takes up to 5 comma-separated paths (after these runs).
 
 ## MLflow
 

@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -22,6 +23,7 @@ from .limits import check_k8s_name, check_namespace, check_repo_path, clamp, par
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True)
 MAX_WINDOW = timedelta(hours=6)
+MAX_PATHS = 5  # paths per gitops_log call
 
 INSTRUCTIONS = """\
 Read-only tools for investigating incidents on the voting stand (Kubernetes, Kafka/Strimzi, PostgreSQL on
@@ -134,8 +136,9 @@ def build_server(settings: Settings) -> MCPServer:
         path: Annotated[
             str | None,
             Field(
-                description="Only commits touching this existing path, e.g. charts/voting or envs/local.yaml. "
-                "Omit it unless you know the path: a wrong path just returns no commits."
+                description="Only commits touching this existing path, e.g. charts/voting or envs/local.yaml, or any "
+                f"of up to {MAX_PATHS} comma-separated paths. Omit it unless you know the path: a wrong path just "
+                "returns no commits."
             ),
         ] = None,
         max_count: Annotated[int, Field(description="Maximum commits (1-50)")] = 20,
@@ -144,11 +147,15 @@ def build_server(settings: Settings) -> MCPServer:
         """git log of the GitOps repository (voting-gitops, the branch the cluster follows): every change to the
         desired state of the cluster, newest first, with the files touched and optionally the diff."""
         window = parse_duration(since, maximum=timedelta(days=14), name="since")
-        if path is not None:
-            check_repo_path(path)
+        # The model often asks for two files at once as "a,b": take them as two paths rather than refuse.
+        paths = [p.strip() for p in (path or "").split(",") if p.strip()]
+        if len(paths) > MAX_PATHS:
+            raise ToolError(f"at most {MAX_PATHS} paths, got {len(paths)}")
+        for p in paths:
+            check_repo_path(p)
         clamp(max_count, 1, 50, "max_count")
         return await gitops.gitops_log(
-            settings.gitops_repo, settings.gitops_branch, window, path, max_count, with_diff, timeout
+            settings.gitops_repo, settings.gitops_branch, window, paths, max_count, with_diff, timeout
         )
 
     return server
