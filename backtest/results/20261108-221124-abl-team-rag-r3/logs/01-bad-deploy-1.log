@@ -1,0 +1,26 @@
+
+$ scenarios/01-bad-deploy/break.sh 
+[22:12:29] pushed a21023f: image.tag 58f7ebbc0ea2e3ea146f92de4356662c4c4540bb -> ec18b350b3ef46b1e952c833b596e6ef50ae6a2c (does not exist)
+[22:12:29] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/01-bad-deploy.expected.yaml
+[22:12:30] waiting for VotingPodNotStarting to be firing (up to 420s)
+[22:15:00] VotingPodNotStarting is firing after 150s
+
+$ scenarios/apply-fix.sh revert e9446e8ad873480fdae3651a830d8c8ce27609ce
+[22:17:08] reverted e9446e8 as 158403f
+[22:17:08] terminating the running operation of voting (it is on another revision)
+[22:27:09] TIMEOUT: voting did not reach 158403f
+applied revert e9446e8ad873480fdae3651a830d8c8ce27609ce 158403f81503fb88a2b2fa8b446a333fd2f7aec4
+
+$ scenarios/apply-fix.sh undo 158403f81503fb88a2b2fa8b446a333fd2f7aec4
+[22:42:15] reverted 158403f as 2904ec5
+[22:42:15] terminating the running operation of voting (it is on another revision)
+[22:52:16] TIMEOUT: voting did not reach 2904ec5
+applied undo 158403f81503fb88a2b2fa8b446a333fd2f7aec4 2904ec52a08e72277f80ca0571cfa8eb04f91ded
+
+$ scenarios/01-bad-deploy/restore.sh 
+[22:52:20] pushed revert ee800f1 of a21023f
+[22:52:20] terminating the running operation of voting (it is on another revision)
+[22:52:26] voting is Synced and Healthy at ee800f1 (last operation: Failed)
+[22:52:27] all Deployments in voting rolled out
+[22:52:27] waiting for VotingPodNotStarting to be resolved (up to 300s)
+[22:52:57] VotingPodNotStarting is not firing after 30s

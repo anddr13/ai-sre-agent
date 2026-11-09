@@ -1,0 +1,21 @@
+
+$ scenarios/07-redis-oom/break.sh 
+[20:50:21] pushed e09bad0: Redis memory limit 128Mi -> 10Mi
+[20:50:21] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/07-redis-oom.expected.yaml
+[20:50:22] k6: 300 votes/s for 20m (container k6-07-redis-oom)
+[20:50:33] data is Synced and Healthy at e09bad0 (last operation: Succeeded)
+[20:50:33] waiting for ContainerOOMKilled to be firing (up to 600s)
+[20:51:54] ContainerOOMKilled is firing after 81s
+
+$ scenarios/apply-fix.sh revert e09bad0a991f
+[20:52:39] reverted e09bad0 as 6c2b066
+[20:52:45] data is Synced and Healthy at 6c2b066 (last operation: Succeeded)
+applied revert e09bad0a991f514862d644b0788af80a9bc42a7e 6c2b066145f59340ef796dedc42b941bd07e34e9
+
+$ scenarios/07-redis-oom/restore.sh 
+[20:57:38] pushed revert 6c2b066 of e09bad0
+[20:57:39] data is Synced and Healthy at 6c2b066 (last operation: Succeeded)
+[20:57:39] k6 stopped
+[20:57:40] Redis rolled out with the previous limit
+[20:57:40] waiting for ContainerOOMKilled to be resolved (up to 900s)
+[20:57:40] ContainerOOMKilled is not firing after 0s

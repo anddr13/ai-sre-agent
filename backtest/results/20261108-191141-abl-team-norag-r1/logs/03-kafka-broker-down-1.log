@@ -1,0 +1,13 @@
+
+$ scenarios/03-kafka-broker-down/break.sh 
+[19:43:22] k6: 100 votes/s for 15m (container k6-03-kafka-broker-down)
+[19:43:42] broker voting-dual-role-1 frozen (java pid 71547 on the node)
+[19:43:42] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/03-kafka-broker-down.expected.yaml
+[19:43:42] waiting for KafkaUnderReplicatedPartitions to be firing (up to 420s)
+[19:45:52] KafkaUnderReplicatedPartitions is firing after 130s
+
+$ scenarios/03-kafka-broker-down/restore.sh 
+[20:01:21] pid 71547 is gone, voting-dual-role-1 was restarted
+[20:01:22] k6 stopped
+[20:01:22] waiting for KafkaUnderReplicatedPartitions to be resolved (up to 420s)
+[20:01:22] KafkaUnderReplicatedPartitions is not firing after 0s

@@ -1,0 +1,13 @@
+{
+  "label": "abl-single-norag-r2",
+  "agent": "llm",
+  "model": "qwen/qwen3-14b",
+  "verifier_model": "",
+  "prompt_version": "42356b24",
+  "scenarios": "01-bad-deploy,02-config-regression,03-kafka-broker-down,04-postgres-failover,05-postgres-connections,06-replica-lag,07-redis-oom,08-noise",
+  "runs": 1,
+  "rag": false,
+  "rag_top_k": 3,
+  "apply_fix": true,
+  "commit": "eb566fd"
+}

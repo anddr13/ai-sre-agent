@@ -1,0 +1,13 @@
+{
+  "label": "abl-team-rag-r2",
+  "agent": "team",
+  "model": "qwen/qwen3-14b",
+  "verifier_model": "qwen/qwen3-235b-a22b-2507",
+  "prompt_version": "ec894dba",
+  "scenarios": "01-bad-deploy,02-config-regression,03-kafka-broker-down,04-postgres-failover,05-postgres-connections,06-replica-lag,07-redis-oom,08-noise",
+  "runs": 1,
+  "rag": true,
+  "rag_top_k": 3,
+  "apply_fix": true,
+  "commit": "eb566fd"
+}

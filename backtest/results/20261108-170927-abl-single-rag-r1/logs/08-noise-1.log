@@ -1,0 +1,28 @@
+
+$ scenarios/08-noise/break.sh 
+[18:59:28] pushed 30db563: cloudName kind -> kind-lab
+[18:59:28] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/08-noise.expected.yaml
+[18:59:34] voting is Synced and Healthy at 30db563 (last operation: Succeeded)
+[18:59:35] all Deployments in voting rolled out
+[18:59:35] k6: 2500 votes/s for 60s (container k6-08-noise)
+[18:59:35] waiting for VotingApiLatencyHigh to be firing (up to 240s)
+[19:00:25] VotingApiLatencyHigh is firing after 50s
+
+$ scenarios/apply-fix.sh revert 8e5266edbc84
+[19:01:03] reverted 8e5266e as ced9a9e
+[19:11:08] TIMEOUT: voting did not reach ced9a9e
+applied revert 8e5266edbc8437861bb6db9bc45cd8f6abeaaec2 ced9a9eadd2ba7b75220767b187b2823fede0fda
+
+$ scenarios/apply-fix.sh undo ced9a9eadd2ba7b75220767b187b2823fede0fda
+[19:11:11] reverted ced9a9e as c6a6b07
+[19:11:12] terminating the running operation of voting (it is on another revision)
+[19:11:17] voting is Synced and Healthy at c6a6b07 (last operation: Failed)
+applied undo ced9a9eadd2ba7b75220767b187b2823fede0fda c6a6b0772e626ef675bf69057fe309b121eeab4f
+
+$ scenarios/08-noise/restore.sh 
+[19:11:17] k6 stopped
+[19:11:21] pushed revert a6889a7 of 30db563
+[19:11:27] voting is Synced and Healthy at a6889a7 (last operation: Failed)
+[19:11:28] all Deployments in voting rolled out
+[19:11:28] waiting for VotingApiLatencyHigh to be resolved (up to 300s)
+[19:11:28] VotingApiLatencyHigh is not firing after 0s

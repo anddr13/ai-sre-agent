@@ -1,0 +1,21 @@
+
+$ scenarios/02-config-regression/break.sh 
+[22:54:01] pushed d9d1fb8: RATE_LIMIT_SECONDS "3" -> "3s"
+[22:54:01] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/02-config-regression.expected.yaml
+[22:54:02] k6: 50 votes/s for 20m (container k6-02-config-regression)
+[22:54:24] voting is Synced and Healthy at d9d1fb8 (last operation: Succeeded)
+[22:54:24] waiting for VotingHttp5xxRate to be firing (up to 600s)
+[22:56:54] VotingHttp5xxRate is firing after 150s
+
+$ scenarios/apply-fix.sh revert d9d1fb811d5b
+[22:58:38] reverted d9d1fb8 as 1b47875
+[22:59:00] voting is Synced and Healthy at 1b47875 (last operation: Succeeded)
+applied revert d9d1fb811d5bba1a2f48666490733b58424edf86 1b47875ebb37d7d3b6662f3b38425b36ec40df09
+
+$ scenarios/02-config-regression/restore.sh 
+[23:04:04] pushed revert 1b47875 of d9d1fb8
+[23:04:04] voting is Synced and Healthy at 1b47875 (last operation: Succeeded)
+[23:04:05] all Deployments in voting rolled out
+[23:04:06] k6 stopped
+[23:04:06] waiting for VotingHttp5xxRate to be resolved (up to 420s)
+[23:04:06] VotingHttp5xxRate is not firing after 0s

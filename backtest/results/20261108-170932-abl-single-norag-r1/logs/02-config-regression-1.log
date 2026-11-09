@@ -1,0 +1,39 @@
+
+$ scenarios/02-config-regression/break.sh 
+[17:17:35] pushed 47432bc: RATE_LIMIT_SECONDS "3" -> "3s"
+[17:17:35] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/02-config-regression.expected.yaml
+Unable to find image 'grafana/k6:2.3.0' locally
+2.3.0: Pulling from grafana/k6
+2b28f25602d4: Pulling fs layer
+4f4fb700ef54: Pulling fs layer
+699240e0b337: Pulling fs layer
+55afa1ecc21d: Pulling fs layer
+2b28f25602d4: Download complete
+4f4fb700ef54: Download complete
+44136fa355b3: Download complete
+55afa1ecc21d: Download complete
+31e524fa658e: Download complete
+2b28f25602d4: Pull complete
+55afa1ecc21d: Pull complete
+699240e0b337: Download complete
+4f4fb700ef54: Pull complete
+699240e0b337: Pull complete
+Digest: sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
+Status: Downloaded newer image for grafana/k6:2.3.0
+[17:17:39] k6: 50 votes/s for 20m (container k6-02-config-regression)
+[17:18:01] voting is Synced and Healthy at 47432bc (last operation: Succeeded)
+[17:18:01] waiting for VotingHttp5xxRate to be firing (up to 600s)
+[17:21:02] VotingHttp5xxRate is firing after 181s
+
+$ scenarios/apply-fix.sh revert 47432bc62fe3
+[17:21:36] reverted 47432bc as 2279168
+[17:21:58] voting is Synced and Healthy at 2279168 (last operation: Succeeded)
+applied revert 47432bc62fe3977169ec31d326885dfd85d20ab2 2279168e1d36e3f94915c22a6d796e37e585fe62
+
+$ scenarios/02-config-regression/restore.sh 
+[17:27:03] pushed revert 2279168 of 47432bc
+[17:27:04] voting is Synced and Healthy at 2279168 (last operation: Succeeded)
+[17:27:05] all Deployments in voting rolled out
+[17:27:05] k6 stopped
+[17:27:05] waiting for VotingHttp5xxRate to be resolved (up to 420s)
+[17:27:05] VotingHttp5xxRate is not firing after 0s

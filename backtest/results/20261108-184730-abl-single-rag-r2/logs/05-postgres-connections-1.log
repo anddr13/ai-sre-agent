@@ -1,0 +1,21 @@
+
+$ scenarios/05-postgres-connections/break.sh 
+[19:22:38] pushed 7e45d32: max_connections 100 -> 8
+[19:22:38] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/05-postgres-connections.expected.yaml
+[19:22:38] k6: 150 votes/s for 20m (container k6-05-postgres-connections)
+[19:22:44] data is Synced and Healthy at 7e45d32 (last operation: Succeeded)
+[19:22:44] waiting for PostgresConnectionsHigh to be firing (up to 600s)
+[19:27:25] PostgresConnectionsHigh is firing after 281s
+
+$ scenarios/apply-fix.sh revert 7e45d3232f98
+[19:27:57] reverted 7e45d32 as 2107c3d
+[19:31:23] data is Synced and Healthy at 2107c3d (last operation: Succeeded)
+applied revert 7e45d3232f987ca7945ebff1c759cc61914be2e0 2107c3d2582b6b65c3e1a0eb6509428566b5e2bc
+
+$ scenarios/05-postgres-connections/restore.sh 
+[19:36:25] k6 stopped
+[19:36:26] pushed revert 2107c3d of 7e45d32
+[19:36:27] data is Synced and Healthy at 2107c3d (last operation: Succeeded)
+[19:36:27] PostgreSQL cluster ready, primary voting-pg-1
+[19:36:27] waiting for PostgresConnectionsHigh to be resolved (up to 420s)
+[19:36:27] PostgresConnectionsHigh is not firing after 0s

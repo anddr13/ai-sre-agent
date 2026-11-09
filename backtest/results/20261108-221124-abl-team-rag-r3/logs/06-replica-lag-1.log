@@ -1,0 +1,24 @@
+
+$ scenarios/06-replica-lag/break.sh 
+[23:52:35] PostgreSQL cluster ready, primary voting-pg-1
+[23:52:36] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/06-replica-lag.expected.yaml
+[23:52:36] k6: 300 votes/s for 20m (container k6-06-replica-lag)
+[23:52:57] WAL replay paused on voting-pg-2
+[23:52:57] waiting for PostgresReplicationLag to be firing (up to 600s)
+[23:54:57] PostgresReplicationLag is firing after 120s
+
+$ scenarios/apply-fix.sh revert 1229bfa4ac7b
+[23:56:08] reverted 1229bfa as ea84e81
+[23:56:14] data is Synced and Healthy at ea84e81 (last operation: Succeeded)
+applied revert 1229bfa4ac7b8999acdcfca8d6652811b0b41565 ea84e81fc18790d097f9fbf5821973acc2eb95a8
+
+$ scenarios/apply-fix.sh undo ea84e81fc18790d097f9fbf5821973acc2eb95a8
+[00:11:20] reverted ea84e81 as 622cf6a
+[00:14:34] data is Synced and Healthy at 622cf6a (last operation: Succeeded)
+applied undo ea84e81fc18790d097f9fbf5821973acc2eb95a8 622cf6a163b528dfb2c59e4b9b5db9684af3fe79
+
+$ scenarios/06-replica-lag/restore.sh 
+[00:14:34] WAL replay resumed on voting-pg-2
+[00:14:35] k6 stopped
+[00:14:35] waiting for PostgresReplicationLag to be resolved (up to 600s)
+[00:15:25] PostgresReplicationLag is not firing after 50s
