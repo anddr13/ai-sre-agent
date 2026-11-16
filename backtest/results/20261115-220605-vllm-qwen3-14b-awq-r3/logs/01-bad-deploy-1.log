@@ -1,0 +1,19 @@
+
+$ scenarios/01-bad-deploy/break.sh 
+[22:07:10] pushed 834737e: image.tag 58f7ebbc0ea2e3ea146f92de4356662c4c4540bb -> 982c7cdce7b94a3704aad59a4c5bcbb2a63b1e3b (does not exist)
+[22:07:10] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/01-bad-deploy.expected.yaml
+[22:07:10] waiting for VotingPodNotStarting to be firing (up to 420s)
+[22:09:50] VotingPodNotStarting is firing after 160s
+
+$ scenarios/apply-fix.sh revert 834737e61c49
+[22:10:36] reverted 834737e as 951e246
+[22:10:37] terminating the running operation of voting (it is on another revision)
+[22:10:42] voting is Synced and Healthy at 951e246 (last operation: Failed)
+applied revert 834737e61c4970d34907d852dbc9c2e04464a365 951e2464c65c67fd4d7109c062be221ed02d1214
+
+$ scenarios/01-bad-deploy/restore.sh 
+[22:11:24] pushed revert 951e246 of 834737e
+[22:11:25] voting is Synced and Healthy at 951e246 (last operation: Failed)
+[22:11:25] all Deployments in voting rolled out
+[22:11:25] waiting for VotingPodNotStarting to be resolved (up to 300s)
+[22:11:25] VotingPodNotStarting is not firing after 0s

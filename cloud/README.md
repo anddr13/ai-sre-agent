@@ -61,3 +61,22 @@ prepare` takes `LLM_*` from that file over `.env`, e.g. the self-hosted vLLM tha
 `cloud/stands.sh ssh N` opens a shell on stand N. There, tmux session `prepare` brings the stand up
 (`~/prepare.log`), `bt` runs the queued backtests (`~/queue`, log `~/backtest.log`) and `db` holds the agent-db
 port-forward.
+
+## Self-hosted vLLM
+
+The lab AWS account may not create load balancers, so the stands reach the vLLM of
+[gpu-inference-platform](https://github.com/anddr13/gpu-inference-platform) through SSH reverse tunnels opened
+from a pod in that cluster (`cloud/vllm-tunnel.yaml`). Each stand then has the API on its own `127.0.0.1:8000`.
+The order (2026-11-15):
+
+1. GPU capacity first: start a plain on-demand GPU instance in a zone that has some and keep it; EKS comes up with
+   the GPU node group at `gpu_desired_size = 0` in that zone; then terminate the instance and scale the group to 1.
+2. `cloud/stands.sh plan` / `up` with `EXTRA_SSH_CIDRS=<NAT IP of the EKS VPC>/32`, so the tunnel may SSH in.
+3. A key of its own, `~/.ssh/ai-sre-vllm-tunnel`, appended to `~ubuntu/.ssh/authorized_keys` of every stand as
+   `restrict,port-forwarding,permitlisten="127.0.0.1:8000",command="/bin/false" <key>`; the stands' host keys
+   into `~/.ssh/ai-sre-vllm-tunnel.known_hosts` (checked against `~/.ssh/ai-sre-stands.known_hosts`).
+4. In the cluster, namespace `llm`: Secret `vllm-tunnel` (`id`, `known_hosts`), ConfigMap `vllm-tunnel`
+   (`STANDS`: the stand IPs, space-separated), then `kubectl apply -f cloud/vllm-tunnel.yaml`.
+5. A settings file with `LLM_BASE_URL=http://127.0.0.1:8000/v1`, `LLM_MODEL` and `LLM_API_KEY` (Secret
+   `vllm-api-key`), then `LLM_ENV=<file> cloud/stands.sh prepare`. Another model between waves:
+   `cloud/stands.sh run N LLM_MODEL=<served name> ...`.

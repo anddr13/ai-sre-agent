@@ -1,0 +1,27 @@
+
+$ scenarios/02-config-regression/break.sh 
+[22:12:10] pushed b8014de: RATE_LIMIT_SECONDS "3" -> "3s"
+[22:12:10] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/02-config-regression.expected.yaml
+[22:12:10] k6: 50 votes/s for 20m (container k6-02-config-regression)
+[22:12:32] voting is Synced and Healthy at b8014de (last operation: Succeeded)
+[22:12:32] waiting for VotingHttp5xxRate to be firing (up to 600s)
+[22:15:03] VotingHttp5xxRate is firing after 151s
+
+$ scenarios/apply-fix.sh revert dfe91f32a1d2
+[22:15:56] reverted dfe91f3 as 3f96bdb
+[22:25:59] TIMEOUT: voting did not reach 3f96bdb
+applied revert dfe91f32a1d24533f8ed114748ac445fd9f97911 3f96bdb5d32cdc73d655653591238e320e3a78f9
+
+$ scenarios/apply-fix.sh undo 3f96bdb5d32cdc73d655653591238e320e3a78f9
+[22:37:16] reverted 3f96bdb as 552e35b
+[22:37:17] terminating the running operation of voting (it is on another revision)
+[22:37:22] voting is Synced and Healthy at 552e35b (last operation: Failed)
+applied undo 3f96bdb5d32cdc73d655653591238e320e3a78f9 552e35b0cb935c45e75fa9e2c0daf3d8e263f3f2
+
+$ scenarios/02-config-regression/restore.sh 
+[22:37:26] pushed revert dc8aa19 of b8014de
+[22:37:43] voting is Synced and Healthy at dc8aa19 (last operation: Succeeded)
+[22:37:44] all Deployments in voting rolled out
+[22:37:44] k6 stopped
+[22:37:44] waiting for VotingHttp5xxRate to be resolved (up to 420s)
+[22:37:44] VotingHttp5xxRate is not firing after 0s

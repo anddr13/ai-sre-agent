@@ -189,6 +189,39 @@ single agent with RAG is the cheap choice at almost the same accuracy.
 In 3 investigations the model passed two paths joined by a comma to `gitops_log`. The tool rejected them, and
 the model went on without that call. `gitops_log` now takes up to 5 comma-separated paths (after these runs).
 
+### Self-hosted on vLLM (2026-11-15)
+
+The single agent with RAG and `--apply-fix` on [gpu-inference-platform](https://github.com/anddr13/gpu-inference-platform):
+vLLM 0.32 on one A10G (EKS `g5.2xlarge`, on-demand $1.285/h), tool calls through the `hermes` parser, reasoning
+split off, 20k context, fp8 KV cache. 3 runs per model on 3 cloud stands at once, labels `vllm-*`. The
+OpenRouter row is the same configuration from the ablations.
+
+| | Top-1 (runs) | Top-3 | Triage | Wrong but "high" | Recovered | Median investigation | Cost / investigation |
+|---|---|---|---|---|---|---|---|
+| Qwen3-8B, bf16, vLLM | 3.67 (4, 3, 4) | 4.67 | 6.67 | 2.67 | 4.67 | 60 s | $0.118 |
+| Qwen3-14B-AWQ, vLLM | 5.33 (5, 5, 6) | 5.67 | 6.00 | 2.00 | 6.33 | 39 s | $0.107 |
+| qwen3-14b, OpenRouter | 5.00 (4, 5, 6) | 5.33 | 6.33 | 1.67 | 6.00 | 27 s | $0.0021 |
+
+- **Multi-step tool calling works** on both models (the open question of PLAN.md). 8B misuses the tools more:
+  comma-joined names and `voting-dual-role-*` wildcards for `k8s_events`, broken LogQL. The tools refuse them.
+- **14B-AWQ matches the API model** (5.33 against 5.00 top-1). The 4-bit quantization costs no accuracy here. 8B
+  never solves 2 (the config change) or 3 (the broker), which 14B solves in 3/3 and 1/3.
+- **14B-AWQ is faster than 8B in bf16**: ~57 against ~27 tokens/s per request. The 4-bit weights move less memory.
+- **The GPU idles.** Average utilization was 16% (8B) and 10% (14B); never more than 3 requests at once, at most
+  29% of the KV cache. Most of a backtest is waiting for the fix and the recovery. Prefix cache hit ratio 54% and
+  44%: the system prompt, tool schemas and runbooks repeat.
+- **Cost** is the A10G node for the length of a wave divided by its 24 investigations; EKS, NAT and the system
+  nodes are not counted. A self-hosted GPU wins only with far more load: if the GPU were billed only while an
+  investigation runs, it would be $0.014 (14B), still ~7× the API.
+- Two 14B top-1 hits are generous: in a run of 4 the hypothesis blames `max_connections` and only mentions the
+  failover, in a run of 5 it leads with readiness probes and names `max_connections 8` later. Without them, 14B is
+  4.67. The regex judge treats every configuration the same way.
+
+Getting there: on 2026-11-09 and in the first try of 2026-11-15 eu-north-1 had no g5/g6 capacity. The way through
+was to start a plain instance as soon as one was free, keep it, bring EKS up with an empty GPU group, then release
+the instance and scale the group to 1. The lab AWS account may not create load balancers, so the stands reach vLLM
+through SSH reverse tunnels from a pod in the cluster (`cloud/vllm-tunnel.yaml`).
+
 ## MLflow
 
 MLflow runs in the cluster (`mlflow.localhost:8090`) on the agent's own PostgreSQL (`deploy/db.yaml`: CNPG,
@@ -222,4 +255,4 @@ refuses when the prompt has changed since those runs.
 - [x] Apply the agent's fix + time to recovery
 - [x] Backtest stands on GCE, several runs side by side (`cloud/`)
 - [x] Ablations with repeats (single/team × RAG/no RAG), MLflow Prompt Registry
-- [ ] vLLM on a GPU (7B against 14B)
+- [x] vLLM on a GPU: Qwen3-8B against Qwen3-14B-AWQ, 3 runs each

@@ -53,6 +53,12 @@ variable "ssh_cidr" {
   type        = string
 }
 
+variable "extra_ssh_cidrs" {
+  description = "More SSH sources, e.g. the NAT address of the cluster whose vLLM tunnels in (EXTRA_SSH_CIDRS of stands.sh)."
+  type        = list(string)
+  default     = []
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -85,7 +91,7 @@ resource "google_compute_firewall" "ssh" {
   name          = "${local.name}-ssh"
   network       = google_compute_network.this.id
   direction     = "INGRESS"
-  source_ranges = [var.ssh_cidr]
+  source_ranges = concat([var.ssh_cidr], var.extra_ssh_cidrs)
   target_tags   = [local.name]
 
   allow {

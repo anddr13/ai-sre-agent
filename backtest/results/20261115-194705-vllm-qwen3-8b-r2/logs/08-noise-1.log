@@ -1,0 +1,21 @@
+
+$ scenarios/08-noise/break.sh 
+[21:42:54] pushed 19f34ec: cloudName kind -> kind-lab
+[21:42:54] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/08-noise.expected.yaml
+[21:43:00] voting is Synced and Healthy at 19f34ec (last operation: Succeeded)
+[21:43:01] all Deployments in voting rolled out
+[21:43:01] k6: 2500 votes/s for 60s (container k6-08-noise)
+[21:43:01] waiting for VotingApiLatencyHigh to be firing (up to 240s)
+[21:43:32] VotingApiLatencyHigh is firing after 31s
+
+$ scenarios/apply-fix.sh restart_pod vote-api-66c76995c4-k2nfl
+Error from server (NotFound): pods "vote-api-66c76995c4-k2nfl" not found
+rejected: cannot delete pod vote-api-66c76995c4-k2nfl in voting
+
+$ scenarios/08-noise/restore.sh 
+[21:48:33] k6 stopped
+[21:48:37] pushed revert 044c0ba of 19f34ec
+[21:48:43] voting is Synced and Healthy at 044c0ba (last operation: Succeeded)
+[21:48:44] all Deployments in voting rolled out
+[21:48:44] waiting for VotingApiLatencyHigh to be resolved (up to 300s)
+[21:48:44] VotingApiLatencyHigh is not firing after 0s

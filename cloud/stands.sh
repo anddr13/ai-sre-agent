@@ -27,7 +27,7 @@ set -euo pipefail
 # From WSL: run again in Git Bash. gcloud, gh, terraform (with its Windows provider) and the stands' SSH key all
 # live on the Windows side. WSLENV hands the settings above over to it.
 if grep -qi microsoft /proc/version 2> /dev/null; then
-  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:LLM_ENV/p:${WSLENV:-}
+  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:LLM_ENV/p:EXTRA_SSH_CIDRS:${WSLENV:-}
   exec "/mnt/c/Program Files/Git/bin/bash.exe" "$(wslpath -w "$(realpath "$0")")" "$@"
 fi
 cd "$(dirname "$0")/.."
@@ -56,6 +56,8 @@ session() {
 }
 
 tf() { terraform -chdir=cloud "$@"; }
+# EXTRA_SSH_CIDRS=a/32,b/32: more SSH sources for plan (the vLLM tunnel of gpu-inference-platform comes from its NAT).
+[ -n "${EXTRA_SSH_CIDRS:-}" ] && TF_VAR_extra_ssh_cidrs="[\"${EXTRA_SSH_CIDRS//,/\",\"}\"]" && export TF_VAR_extra_ssh_cidrs
 tf_vars() { # the variables only have to be valid for destroy, which works from the state
   echo -var project_id="$PROJECT" -var stands="$1" -var ssh_cidr="$2"
 }

@@ -1,0 +1,44 @@
+
+$ scenarios/02-config-regression/break.sh 
+[19:55:53] pushed 473eb8a: RATE_LIMIT_SECONDS "3" -> "3s"
+[19:55:53] expected answer: /home/ubuntu/ai-sre-agent/scenarios/.state/02-config-regression.expected.yaml
+Unable to find image 'grafana/k6:2.3.0' locally
+2.3.0: Pulling from grafana/k6
+4f4fb700ef54: Pulling fs layer
+699240e0b337: Pulling fs layer
+2b28f25602d4: Pulling fs layer
+55afa1ecc21d: Pulling fs layer
+4f4fb700ef54: Download complete
+2b28f25602d4: Download complete
+55afa1ecc21d: Download complete
+44136fa355b3: Download complete
+31e524fa658e: Download complete
+55afa1ecc21d: Pull complete
+699240e0b337: Download complete
+2b28f25602d4: Pull complete
+4f4fb700ef54: Pull complete
+699240e0b337: Pull complete
+Digest: sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
+Status: Downloaded newer image for grafana/k6:2.3.0
+[19:55:57] k6: 50 votes/s for 20m (container k6-02-config-regression)
+[19:56:20] voting is Synced and Healthy at 473eb8a (last operation: Succeeded)
+[19:56:20] waiting for VotingHttp5xxRate to be firing (up to 600s)
+[19:59:20] VotingHttp5xxRate is firing after 180s
+
+$ scenarios/apply-fix.sh revert 1665574a458f1a598c1a219e8725b1ccea545665
+[20:01:27] reverted 1665574 as f728998
+[20:01:49] data is Synced and Healthy at f728998 (last operation: Succeeded)
+applied revert 1665574a458f1a598c1a219e8725b1ccea545665 f72899831e5bb66f3e4622f5aa98bb5a07df780f
+
+$ scenarios/apply-fix.sh undo f72899831e5bb66f3e4622f5aa98bb5a07df780f
+[20:16:55] reverted f728998 as 140b612
+[20:17:17] data is Synced and Healthy at 140b612 (last operation: Succeeded)
+applied undo f72899831e5bb66f3e4622f5aa98bb5a07df780f 140b612e6b16d1b69ba7c4d099851f3722004561
+
+$ scenarios/02-config-regression/restore.sh 
+[20:17:21] pushed revert f8e25ae of 473eb8a
+[20:17:43] voting is Synced and Healthy at f8e25ae (last operation: Succeeded)
+[20:17:45] all Deployments in voting rolled out
+[20:17:45] k6 stopped
+[20:17:45] waiting for VotingHttp5xxRate to be resolved (up to 420s)
+[20:18:25] VotingHttp5xxRate is not firing after 40s

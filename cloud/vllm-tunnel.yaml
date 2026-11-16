@@ -1,0 +1,74 @@
+# The stands reach a self-hosted vLLM on EKS (gpu-inference-platform, `make agent-vllm`) through SSH reverse tunnels
+# opened from inside the cluster: the lab AWS account may not create load balancers, and nothing in AWS listens on
+# the internet. Each stand then has the API on its own 127.0.0.1:8000.
+#
+# On the stands the key may only listen on 127.0.0.1:8000 (authorized_keys: restrict,port-forwarding,
+# permitlisten="127.0.0.1:8000",command="/bin/false"); their firewall admits the cluster's NAT address
+# (EXTRA_SSH_CIDRS of stands.sh). Host keys come from the laptop, not from first use. The steps are in
+# cloud/README.md ("Self-hosted vLLM").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-tunnel
+  namespace: llm
+  labels:
+    app.kubernetes.io/name: vllm-tunnel
+spec:
+  replicas: 1
+  # Two copies would fight over the same port on the stands.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vllm-tunnel
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: tunnel
+          image: alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              apk add --no-cache -q openssh-client
+              for host in $STANDS; do
+                # One loop per stand: a dropped tunnel comes back within seconds.
+                (while true; do
+                  ssh -N -i /keys/id -o UserKnownHostsFile=/keys/known_hosts -o StrictHostKeyChecking=yes \
+                    -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+                    -R 127.0.0.1:8000:vllm.llm.svc.cluster.local:8000 "ubuntu@$host" || true
+                  echo "$(date -u +%T) tunnel to $host down, reconnecting"
+                  sleep 5
+                done) &
+              done
+              echo "tunnels to: $STANDS"
+              wait
+          env:
+            - name: STANDS
+              valueFrom:
+                configMapKeyRef:
+                  name: vllm-tunnel
+                  key: STANDS
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: keys
+              mountPath: /keys
+              readOnly: true
+      volumes:
+        - name: keys
+          secret:
+            secretName: vllm-tunnel
+            defaultMode: 0400

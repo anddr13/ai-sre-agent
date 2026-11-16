@@ -102,7 +102,7 @@ Alertmanager ──webhook──> Orchestrator (Python asyncio)
 - [x] MLflow (сервер в кластере, backend — тот же Postgres агента): каждый прогон бэктеста — это run с моделью, версией промпта, точностью, временем и стоимостью. Трейсы LLM-вызовов через MLflow Tracing; лучшая связка промпта и модели — в registry (Prompt Registry в MLflow на ноутбуке, `ai-sre-mlflow`)
 - [x] Метка в отчёте «будить / до утра / шум», проверка на сценарии 8
 - [x] Применять предложенные фиксы скриптом и засекать время до восстановления SLO
-- [ ] vLLM на GPU → стоимость расследования (задача 8; код готов: `make agent-vllm` в gpu-inference-platform, `LLM_ENV` в `cloud/stands.sh`; первый заход 2026-11-09 сорвался — в eu-north-1 не было g5/g6):
+- [x] vLLM на GPU → стоимость расследования (задача 8, прогоны 2026-11-15, см. README: 8B 3.67 top-1, 14B-AWQ 5.33 против 5.00 у OpenRouter, ~$0.11 за расследование на A10G при утилизации GPU 10–16%; код готов: `make agent-vllm` в gpu-inference-platform, `LLM_ENV` в `cloud/stands.sh`; первый заход 2026-11-09 сорвался — в eu-north-1 не было g5/g6):
   - GPU: `make eks-preflight` → GPU-группа в зоне с мощностями (`gpu_zones`, только `ON_DEMAND`: Spot в этом аккаунте запрещён SCP) → другой регион последним. Регион кластера — `region` в `terraform.tfvars`, а не `REGION` из Makefile: менять оба вместе (S3-бэкенд в `backend.hcl` от этого не зависит). Сначала проверить мощность одним инстансом, потом поднимать EKS и стенды
   - Перед `aws login`/terraform: `aws sts get-caller-identity --profile gpu-lab` = 463200133800 (профиль может привязаться ко второму аккаунту)
   - Основное сравнение: single + RAG, Qwen3-8B против Qwen3-14B-AWQ, по 3 повтора на 3 стендах GCE — две волны, модель меняется между ними. Верификатор 235B в 24 GB не влезает
@@ -113,7 +113,7 @@ Alertmanager ──webhook──> Orchestrator (Python asyncio)
 - [ ] Абляция через тот же раннер, флагами в конфиге, всё в MLflow (прогоны 2026-11-08 на стендах GCE, см. README):
   - [x] один агент против investigators + verifier (главное — ложные «уверенные» ответы)
   - [x] с RAG и без RAG
-  - [ ] Qwen 7B против 14B AWQ на vLLM, в тот же заход на GPU
+  - [x] Qwen3-8B против Qwen3-14B-AWQ на vLLM (2026-11-15)
   - [x] стабильность: каждый сценарий 3 прогона, совпадает ли причина
 - [ ] README с цифрами и GIF; пост в LinkedIn (задача 9):
   - README: заполнить строку CV (N, X, M, R, Y, Z), таблица vLLM, раздел «Ограничения» (почему не решаются сценарии 6 и 8)
