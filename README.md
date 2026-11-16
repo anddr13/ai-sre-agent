@@ -4,7 +4,22 @@ A read-only agent that investigates Kubernetes incidents: a few minutes after an
 root cause, the evidence (query + result) and a suggested fix. It never changes the cluster.
 A backtest on chaos scenarios with known causes measures how often it is right.
 
-Work in progress; the full plan is in [PLAN.md](PLAN.md) (in Russian).
+## Results
+
+8 chaos scenarios on a kind stand, the expected answer written down before the agent runs, 3 runs of each
+configuration (24 investigations). The single agent with RAG over the runbooks, `qwen/qwen3-14b`:
+
+- **Root cause first in 15/24**, in the top 3 in 16/24, triage (wake / morning / noise) right in 19/24.
+- **Its fix restored the service in 12 of the 18** investigations where the stand does not heal by itself, median
+  6 min from the alert to recovery. The fix is one action from an allowlist, applied by a separate ServiceAccount.
+- **Median 31 s from the alert to the answer in Slack, $0.002 per investigation.**
+- **Adding investigators and a verifier bought +1 of 24 at 5.7× the cost**; RAG bought +5. See [Ablations](#ablations-2026-11-08).
+- **Self-hosted Qwen3-14B-AWQ on vLLM** (one A10G) does as well, 16/24, but at this load the GPU idles and costs
+  ~50× the API per investigation. See [Self-hosted on vLLM](#self-hosted-on-vllm-2026-11-15).
+- **What it cannot do yet** is in [Limitations](#limitations): it never calls noise noise, and it rarely finds a
+  stalled replica.
+
+The plan and the reasoning behind it are in [PLAN.md](PLAN.md) (in Russian).
 
 ## The stand
 
@@ -60,8 +75,8 @@ Settings come from the environment or a local `.env` (never committed): `PROMETH
 Alertmanager posts the voting alerts to `ai-sre-agent.ai-sre-agent.svc:8080/alertmanager`. The service answers at
 once and investigates in the background:
 
-1. the alert (redacted) and the six MCP tools go to an OpenAI-compatible LLM (`LLM_BASE_URL`, `LLM_MODEL`; now
-   `qwen/qwen3-14b` on OpenRouter, later the vLLM from gpu-inference-platform);
+1. the alert (redacted) and the six MCP tools go to an OpenAI-compatible LLM (`LLM_BASE_URL`, `LLM_MODEL`:
+   `qwen/qwen3-14b` on OpenRouter, or a vLLM from gpu-inference-platform, see below);
 2. the model calls tools through a real MCP session; every result is redacted (tokens, passwords, keys, IPs,
    e-mails) and cut to size before the model sees it, and labelled `[call N]`;
 3. it answers with a JSON hypothesis: root cause, confidence, evidence as call numbers, mitigation as text;
@@ -222,6 +237,30 @@ was to start a plain instance as soon as one was free, keep it, bring EKS up wit
 the instance and scale the group to 1. The lab AWS account may not create load balancers, so the stands reach vLLM
 through SSH reverse tunnels from a pod in the cluster (`cloud/vllm-tunnel.yaml`).
 
+## Limitations
+
+**Scenario 8, noise.** A short burst of traffic lifts vote-api's p99 over a deliberately sensitive threshold for
+about a minute; a harmless release went out just before. In all 18 investigations (the 12 ablation runs and 6 on
+vLLM) the triage was never "noise": 15 times "wake", 3 times "morning", and the release or an old config change
+got the blame. The agent answers ~30 s after the alert fires, while the spike is still on, and nothing looks
+again later. Telling a transient spike from an outage needs another look a few minutes later, or a
+rule to check errors and a longer window before blaming a change. Neither is built.
+
+**Scenario 6, stalled replica.** WAL still reaches the replica but is not applied. 1 hit in 12 ablation runs and
+none in 6 on vLLM. In 12 of these 18 investigations the answer blames a commit, usually an earlier scenario's
+`max_connections` change still in the branch history: a recent change is the easiest story to tell. The runbook
+says to compare received and replayed WAL, yet only 5 of the 18 answers mention replay at all. The fix is probably a prompt that makes it rule out
+the replication mechanism before the history, which the backtest would have to confirm.
+
+**The measurement.**
+
+- 8 scenarios, written by the same person who wrote the agent and the runbooks. Scenarios 9-15 are planned.
+- The judge is a regex per scenario: cheap and the same for every configuration, but generous at times. Two
+  vLLM 14B hits name the right cause second, after a wrong one (see above).
+- 3 runs per configuration: differences under ~0.5 top-1 per run are within the run-to-run spread.
+- One kind stand on one machine, not a real cluster under real traffic, and no human in the loop: the fix is
+  applied without review in the backtest. In the cluster the agent only posts to Slack.
+
 ## MLflow
 
 MLflow runs in the cluster (`mlflow.localhost:8090`) on the agent's own PostgreSQL (`deploy/db.yaml`: CNPG,
@@ -256,3 +295,5 @@ refuses when the prompt has changed since those runs.
 - [x] Backtest stands on GCE, several runs side by side (`cloud/`)
 - [x] Ablations with repeats (single/team × RAG/no RAG), MLflow Prompt Registry
 - [x] vLLM on a GPU: Qwen3-8B against Qwen3-14B-AWQ, 3 runs each
+- [x] Results summary and limitations
+- [ ] A demo GIF: alert → hypothesis in Slack → fix → resolved
