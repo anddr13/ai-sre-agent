@@ -29,7 +29,9 @@ In project `voting-gke-cdzjn`, zone `europe-central2-a`:
   they exist. `down` deletes it, along with the `lab-N` branches. The copy itself stays.
 
 What reaches the machines from `.env`: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, `VERIFIER_MODEL`,
-`MLFLOW_TRACKING_URI`. Slack stays off. Each stand has its own ai-sre-db and MLflow. `collect` brings the result
+`MLFLOW_TRACKING_URI`. Slack stays off, unless `SLACK=1 cloud/stands.sh prepare` also copies `SLACK_BOT_TOKEN`
+and `SLACK_CHANNEL` (for recording a demo: a run with `--no-silence` lets the agent in the stand's cluster post to
+Slack; the token goes away with the machine). Each stand has its own ai-sre-db and MLflow. `collect` brings the result
 directories (`summary.md`, `results.jsonl`) back.
 
 ## Use

@@ -21,13 +21,14 @@
 #
 # Environment: PROJECT (voting-gke-cdzjn), STANDS (3), AGENT_REF (main: the ai-sre-agent revision the stands
 # check out; push first), GH (gh), LLM_ENV (for prepare: a file whose LLM_* settings win over .env, so an API key
-# never goes through the run queue and its log).
+# never goes through the run queue and its log), SLACK (for prepare: 1 also copies SLACK_BOT_TOKEN and
+# SLACK_CHANNEL from .env, so the agent in the stand's cluster posts to Slack; for recording a demo).
 set -euo pipefail
 
 # From WSL: run again in Git Bash. gcloud, gh, terraform (with its Windows provider) and the stands' SSH key all
 # live on the Windows side. WSLENV hands the settings above over to it.
 if grep -qi microsoft /proc/version 2> /dev/null; then
-  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:LLM_ENV/p:EXTRA_SSH_CIDRS:${WSLENV:-}
+  export WSLENV=PROJECT:STANDS:AGENT_REF:GH:LLM_ENV/p:EXTRA_SSH_CIDRS:SLACK:${WSLENV:-}
   exec "/mnt/c/Program Files/Git/bin/bash.exe" "$(wslpath -w "$(realpath "$0")")" "$@"
 fi
 cd "$(dirname "$0")/.."
@@ -44,7 +45,7 @@ GITOPS_KEY=$HOME/.ssh/ai-sre-stands-gitops  # deploy key of the copy (write), re
 KNOWN_HOSTS=$HOME/.ssh/ai-sre-stands.known_hosts
 KEY_ID_FILE=cloud/.deploy-key-id
 LOGS=cloud/logs
-# Only these reach the machines; Slack stays on the laptop (empty values switch it off).
+# Only these reach the machines; Slack stays on the laptop (empty values switch it off) unless SLACK=1.
 ENV_KEYS=(LLM_BASE_URL LLM_MODEL LLM_API_KEY VERIFIER_MODEL MLFLOW_TRACKING_URI)
 GH=${GH:-gh}
 
@@ -178,7 +179,11 @@ prepare_one() {
   for key in "${ENV_KEYS[@]}"; do
     { [ -n "${LLM_ENV:-}" ] && grep -E "^$key=" "$LLM_ENV" || grep -E "^$key=" .env; } | tail -1 >> "$tmp/agent.env" || true
   done
-  printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$tmp/agent.env"
+  if [ "${SLACK:-}" = 1 ]; then
+    grep -E '^SLACK_(BOT_TOKEN|CHANNEL)=' .env >> "$tmp/agent.env" || { echo "SLACK=1 but no Slack settings in .env" >&2; exit 1; }
+  else
+    printf 'SLACK_BOT_TOKEN=\nSLACK_CHANNEL=\n' >> "$tmp/agent.env"
+  fi
   # GITOPS_BRANCH is read by the scenario scripts and by the agent's gitops_log tool.
   printf 'export %s\n' "$(printf '%q ' GITOPS_BRANCH="lab-$n" MLFLOW_DISABLE_AGENT_HINT=1 AGENT_REF="$AGENT_REF" \
     OWNER="$OWNER" GITOPS_COPY="$GITOPS_COPY" GIT_NAME="$(git -C "$GITOPS_DIR" config user.name)" \
